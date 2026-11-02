@@ -21,6 +21,7 @@ Inside it:
 | `state/state.json` | Active claims and submitted problems. |
 | `state/attempts.jsonl` | One line per agent session: problem, start, end, agent, tokens, outcome. |
 | `state/runner.json` | Present while `start` runs. |
+| `cache/cargo-<tool>/` | Cargo dependencies for checks, one cache per checker tool. |
 | `work/<id>/` | Workspace: a checkout of the problem's repository at the pinned commit. |
 | `submissions/<id>/<unix time>/` | `result.patch` and `summary.json` of a submitted result. |
 | `sessions/<id>-<unix time>.jsonl` | The agent's raw output for each `start` session, for debugging. It stays on your machine. |
@@ -66,16 +67,27 @@ Do not commit or switch branches in a workspace. Every command checks that it is
 The local pre-check:
 
 1. Policy checks, without any container: every changed, added, deleted or renamed file must be in `editable`, editable files must not be symbolic links, and spec files must be unchanged. All violations are reported.
-2. The pinned checker in a container, with the command fixed by the tool (see [problem format](problem-format.md#the-check-table)):
+2. For Cargo-based checks (Verus with `cargo = true`, and Kani), a fetch step: the same image runs `cargo fetch --locked` in the manifest directory, with network access, to download the crates pinned by `Cargo.lock` into a cache. It runs no code from the crates. It may take 10 minutes. If the problem has no `Cargo.lock`, the check stops before any container runs.
+3. The pinned checker in a container, with the command fixed by the tool (see [problem format](problem-format.md#the-check-table)), without network:
 
    ```
-   <runtime> run --rm --name pah-<id>-<random> --network none --cap-drop ALL
-     --security-opt no-new-privileges --pids-limit 512 --memory 8g
-     --mount type=bind,source=<workspace>,target=/work[,readonly]
+   <runtime> run --rm --name pah-<id>-check-<random> --network none --cap-drop ALL
+     --security-opt no-new-privileges --pids-limit 512 --memory 8g [--user <uid>:<gid>]
+     --mount type=bind,source=<workspace>,target=/work,readonly
+     [--mount type=bind,source=<home>/cache/cargo-<tool>,target=/cargo-cache,readonly
+      --env CARGO_HOME=/cargo-cache --env CARGO_NET_OFFLINE=true]
      --workdir <workdir> <image>@sha256:<digest> <command...>
    ```
 
-The runtime is `docker` if it is in PATH, else `podman`. `PROOFATHOME_CONTAINER_RUNTIME` overrides it with a program name or path. The checker may run for twice the problem's time budget plus 60 seconds; after that the container is killed and the check fails. The output shows pass or fail, the duration and the last 200 lines (at most 16 KiB) of the checker's output. The exit status is non-zero when the check fails.
+   The fetch step looks the same, except that it has the default network, the cache is writable, Cargo is not offline, and the command is `cargo fetch --locked`.
+
+The runtime is `docker` if it is in PATH, else `podman`. `PROOFATHOME_CONTAINER_RUNTIME` overrides it with a program name or path. The checker may run for twice the problem's time budget plus 60 seconds; after that the container is killed and the check fails. The output shows the fetch, pass or fail, the duration and the last 200 lines (at most 16 KiB) of the checker's output. The exit status is non-zero when the check fails.
+
+**Cache.** Each tool has its own Cargo cache, `<home>/cache/cargo-verus` and `<home>/cache/cargo-kani`. After a successful fetch, the CLI remembers the hash of that `Cargo.lock` and skips the fetch for the same lock file for 7 days. Delete the cache directory to start over.
+
+**User.** On Linux and macOS, containers run as the owner of the home directory (`--user <uid>:<gid>`), so files in the cache belong to you. With Podman, `--userns=keep-id` is used instead. Docker Desktop on Windows needs neither. With rootless Docker, cache files may belong to a mapped user ID.
+
+**Local images.** A problem file always names an image by digest. To try a checker image you built yourself, reference it by the digest Docker gives it, for example `proofathome-verus@sha256:<id>` where `<id>` comes from `docker image inspect proofathome-verus:dev --format '{{.Id}}'`. This works with Docker's containerd image store, the default in current Docker Desktop. With the classic image store, push the image to a local registry and use `localhost:5000/proofathome-verus@sha256:<digest>`. There is no override that bypasses the digest.
 
 This is a pre-check. The program's own checker re-runs every submitted result and adds checks this one does not do yet, such as ghost-only erasure and a scan for escape hatches.
 

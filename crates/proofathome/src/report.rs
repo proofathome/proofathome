@@ -7,7 +7,7 @@ use proofathome_core::{EditMode, Problem};
 use serde_json::{Value, json};
 
 use crate::backend::{ProblemEntry, Status};
-use crate::check::LocalCheck;
+use crate::check::{ContainerRun, LocalCheck};
 use crate::time::rfc3339;
 
 pub const PRE_CHECK_NOTE: &str = "This is a local pre-check. The program's checker re-runs every \
@@ -210,28 +210,54 @@ pub fn check_text(check: &LocalCheck) -> String {
         for violation in &check.violations {
             let _ = writeln!(out, "- {violation}");
         }
-    } else if let Some(run) = &check.checker {
-        let seconds = run.duration_ms as f64 / 1000.0;
-        if run.passed {
-            let _ = writeln!(out, "PASSED in {seconds:.1} s.");
-        } else if run.timed_out {
-            let _ = writeln!(out, "FAILED: the checker timed out after {seconds:.1} s.");
-        } else {
-            let code = run
-                .exit_code
-                .map_or_else(|| "none".to_owned(), |c| c.to_string());
-            let _ = writeln!(
-                out,
-                "FAILED: the checker exited with code {code} after {seconds:.1} s."
-            );
+    } else {
+        if check.fetch_skipped {
+            let _ = writeln!(out, "Dependencies: already fetched for this Cargo.lock.");
         }
-        if !run.output_tail.is_empty() {
-            let _ = writeln!(out, "\nChecker output (last lines):");
-            out.push_str(&run.output_tail);
+        if let Some(fetch) = &check.fetch {
+            let seconds = fetch.duration_ms as f64 / 1000.0;
+            if fetch.passed {
+                let _ = writeln!(out, "Dependencies: fetched in {seconds:.1} s.");
+            } else {
+                let _ = writeln!(
+                    out,
+                    "FAILED: fetching the dependencies pinned by Cargo.lock {}; the checker \
+                     did not run.",
+                    run_failure(fetch, seconds)
+                );
+                if !fetch.output_tail.is_empty() {
+                    let _ = writeln!(out, "\nFetch output (last lines):");
+                    out.push_str(&fetch.output_tail);
+                }
+            }
+        }
+        if let Some(run) = &check.checker {
+            let seconds = run.duration_ms as f64 / 1000.0;
+            if run.passed {
+                let _ = writeln!(out, "PASSED in {seconds:.1} s.");
+            } else {
+                let _ = writeln!(out, "FAILED: the checker {}.", run_failure(run, seconds));
+            }
+            if !run.output_tail.is_empty() {
+                let _ = writeln!(out, "\nChecker output (last lines):");
+                out.push_str(&run.output_tail);
+            }
         }
     }
     let _ = writeln!(out, "\n{PRE_CHECK_NOTE}");
     out
+}
+
+/// `timed out after 3.0 s` or `exited with code 1 after 3.0 s`.
+fn run_failure(run: &ContainerRun, seconds: f64) -> String {
+    if run.timed_out {
+        format!("timed out after {seconds:.1} s")
+    } else {
+        let code = run
+            .exit_code
+            .map_or_else(|| "none".to_owned(), |c| c.to_string());
+        format!("exited with code {code} after {seconds:.1} s")
+    }
 }
 
 /// `proofathome status` and the MCP `status` tool.

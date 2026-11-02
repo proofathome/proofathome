@@ -3,7 +3,7 @@ project = "example-virtio"
 repo = "https://github.com/proofathome/example-virtio"
 commit = "0123456789abcdef0123456789abcdef01234567"
 checker = { tool = "verus", version = "0.2026.10.26.d17fbd0", image = "ghcr.io/proofathome/verus@sha256:0000000000000000000000000000000000000000000000000000000000000000" }
-check = { crate_root = "example-virtio/src/lib.rs" }
+check = { cargo = true, manifest_dir = "example-virtio" }
 target = "example-virtio/src/vsock/credit.rs::peer_avail_credit"
 spec_files = { "example-virtio/src/vsock/credit_spec.rs" = "1111111111111111111111111111111111111111111111111111111111111111" }
 editable = ["example-virtio/src/vsock/credit.rs", "example-virtio/src/vsock/credit_proof.rs"]

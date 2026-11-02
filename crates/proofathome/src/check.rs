@@ -2,6 +2,11 @@
 //! container. The program's own checker runs again on every submitted result
 //! and adds checks this one does not do yet, such as ghost-only erasure and
 //! a scan for escape hatches like `assume`.
+//!
+//! Cargo-based checks take two containers from the same image. The fetch
+//! step has network access and runs only `cargo fetch --locked`, which
+//! downloads the crates pinned by `Cargo.lock` into a cache and runs no crate
+//! code. The check step has no network and sees the cache read-only.
 
 use std::collections::VecDeque;
 use std::env;
@@ -13,16 +18,28 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use proofathome_core::Problem;
+use proofathome_core::{CONTAINER_WORKDIR, Problem};
 use serde::Serialize;
 
 use crate::error::{Error, Result};
-use crate::fsutil::random_hex;
+use crate::fsutil::{atomic_write, create_dir_all, is_older_than, random_hex};
 use crate::git;
+use crate::paths::Home;
 use crate::setup::find_in_path;
 use crate::workspace::sha256_hex;
 
 pub const RUNTIME_ENV: &str = "PROOFATHOME_CONTAINER_RUNTIME";
+
+/// Where the Cargo cache is mounted inside the container.
+pub const CARGO_CACHE_TARGET: &str = "/cargo-cache";
+
+/// The fetch step's time limit. It only downloads crates.
+pub const FETCH_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+
+/// A successful fetch for one `Cargo.lock` is reused for this long. After
+/// that, the fetch runs again, in case Cargo cleaned unused files out of the
+/// cache.
+const FETCH_REUSE: Duration = Duration::from_secs(7 * 24 * 3600);
 
 const TAIL_LINES: usize = 200;
 const TAIL_BYTES: usize = 16 * 1024;
@@ -31,13 +48,20 @@ const TAIL_BYTES: usize = 16 * 1024;
 #[derive(Debug, Clone, Serialize)]
 pub struct LocalCheck {
     pub passed: bool,
-    /// Policy violations. When there are any, the checker does not run.
+    /// Policy violations. When there are any, no container runs.
     pub violations: Vec<String>,
-    pub checker: Option<CheckerRun>,
+    /// The dependency fetch, for Cargo-based checks. When it fails, the
+    /// checker does not run.
+    pub fetch: Option<ContainerRun>,
+    /// Whether the fetch was skipped because the same `Cargo.lock` was
+    /// fetched recently.
+    pub fetch_skipped: bool,
+    pub checker: Option<ContainerRun>,
 }
 
+/// One container run.
 #[derive(Debug, Clone, Serialize)]
-pub struct CheckerRun {
+pub struct ContainerRun {
     pub passed: bool,
     pub timed_out: bool,
     pub exit_code: Option<i32>,
@@ -46,28 +70,324 @@ pub struct CheckerRun {
     pub output_tail: String,
 }
 
-/// Policy checks and then, if they pass, the checker.
-pub fn run(problem: &Problem, workspace: &Path) -> Result<LocalCheck> {
-    let violations = policy_violations(problem, workspace)?;
-    if !violations.is_empty() {
-        return Ok(LocalCheck {
-            passed: false,
-            violations,
-            checker: None,
-        });
+/// Policy checks and then, if they pass, the dependency fetch (for Cargo
+/// checks) and the checker.
+pub fn run(home: &Home, problem: &Problem, workspace: &Path) -> Result<LocalCheck> {
+    let mut result = LocalCheck {
+        passed: false,
+        violations: policy_violations(problem, workspace)?,
+        fetch: None,
+        fetch_skipped: false,
+        checker: None,
+    };
+    if !result.violations.is_empty() {
+        return Ok(result);
     }
     let runtime = container_runtime()?;
-    let checker = run_checker(problem, workspace, &runtime, local_timeout(problem))?;
-    Ok(LocalCheck {
-        passed: checker.passed,
-        violations,
-        checker: Some(checker),
-    })
+    let user = UserMapping::for_runtime(&runtime, home.root());
+    let command = problem.check_command();
+    let cache = if command.cargo {
+        let cache = home
+            .cache_dir()
+            .join(format!("cargo-{}", problem.checker.tool));
+        create_dir_all(&cache)?;
+        let lock = find_lock_file(problem, workspace)?;
+        let marker = cache
+            .join(".proofathome")
+            .join(format!("fetched-{}", sha256_hex(&lock)));
+        if marker.is_file() && !is_older_than(&marker, FETCH_REUSE) {
+            result.fetch_skipped = true;
+        } else {
+            let spec = fetch_spec(problem, workspace, &cache, &user)?;
+            let fetch = run_container(&runtime, &spec, FETCH_TIMEOUT)?;
+            let fetched = fetch.passed;
+            result.fetch = Some(fetch);
+            if !fetched {
+                return Ok(result);
+            }
+            atomic_write(&marker, b"")?;
+        }
+        Some(cache)
+    } else {
+        None
+    };
+    let spec = check_spec(problem, workspace, cache.as_deref(), &user)?;
+    let checker = run_container(&runtime, &spec, local_timeout(problem))?;
+    result.passed = checker.passed;
+    result.checker = Some(checker);
+    Ok(result)
 }
 
 /// Twice the problem's time budget plus a minute for image start-up.
 pub fn local_timeout(problem: &Problem) -> Duration {
     Duration::from_secs(u64::from(problem.time_budget_s) * 2 + 60)
+}
+
+/// The content of the `Cargo.lock` that pins a Cargo check: in the manifest
+/// directory or the nearest directory above it, inside the repository.
+fn find_lock_file(problem: &Problem, workspace: &Path) -> Result<Vec<u8>> {
+    let workdir = problem.check_command().workdir;
+    let manifest_dir = workdir
+        .strip_prefix(CONTAINER_WORKDIR)
+        .unwrap_or_default()
+        .trim_start_matches('/');
+    let mut dir = manifest_dir;
+    loop {
+        let path = workspace.join(dir).join("Cargo.lock");
+        if path.is_file() {
+            return fs::read(&path).map_err(|e| Error::io("read", &path, e));
+        }
+        if dir.is_empty() {
+            break;
+        }
+        dir = dir.rsplit_once('/').map_or("", |(parent, _)| parent);
+    }
+    let place = if manifest_dir.is_empty() {
+        "the repository root".to_owned()
+    } else {
+        format!("`{manifest_dir}` or above it")
+    };
+    Err(Error::new(format!(
+        "problem `{}` is broken: there is no Cargo.lock in {place}. Cargo-based checks \
+         only use dependencies pinned by a committed Cargo.lock",
+        problem.id
+    )))
+}
+
+/// How container processes map to the user on the host, so that files they
+/// write into the cache belong to that user.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UserMapping {
+    /// Leave it to the runtime: Docker Desktop on Windows, where file
+    /// ownership in bind mounts does not apply.
+    Default,
+    /// `--user <uid>:<gid>`, the owner of the home directory.
+    User(String),
+    /// Podman: `--userns=keep-id` maps the calling user into the container,
+    /// also when Podman is rootless.
+    KeepId,
+}
+
+impl UserMapping {
+    pub fn for_runtime(runtime: &Path, home: &Path) -> UserMapping {
+        let is_podman = runtime
+            .file_stem()
+            .is_some_and(|name| name.to_string_lossy().contains("podman"));
+        if is_podman {
+            return UserMapping::KeepId;
+        }
+        owner_of(home).map_or(UserMapping::Default, UserMapping::User)
+    }
+
+    fn args(&self) -> Vec<String> {
+        match self {
+            UserMapping::Default => Vec::new(),
+            UserMapping::User(user) => vec!["--user".to_owned(), user.clone()],
+            UserMapping::KeepId => vec!["--userns=keep-id".to_owned()],
+        }
+    }
+}
+
+#[cfg(unix)]
+fn owner_of(path: &Path) -> Option<String> {
+    use std::os::unix::fs::MetadataExt;
+    let meta = fs::metadata(path).ok()?;
+    Some(format!("{}:{}", meta.uid(), meta.gid()))
+}
+
+#[cfg(not(unix))]
+fn owner_of(_path: &Path) -> Option<String> {
+    None
+}
+
+/// Everything about one container run except the runtime program.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContainerSpec {
+    pub name: String,
+    pub image: String,
+    /// The runtime's default network when true, `--network none` when false.
+    pub network: bool,
+    pub user: UserMapping,
+    /// `--mount` values.
+    pub mounts: Vec<String>,
+    pub env: Vec<(String, String)>,
+    pub workdir: String,
+    pub argv: Vec<String>,
+}
+
+impl ContainerSpec {
+    /// The arguments after the runtime program.
+    pub fn args(&self) -> Vec<String> {
+        let mut args: Vec<String> = vec![
+            "run".to_owned(),
+            "--rm".to_owned(),
+            "--name".to_owned(),
+            self.name.clone(),
+        ];
+        if !self.network {
+            args.extend(["--network", "none"].map(str::to_owned));
+        }
+        args.extend(
+            [
+                "--cap-drop",
+                "ALL",
+                "--security-opt",
+                "no-new-privileges",
+                "--pids-limit",
+                "512",
+                "--memory",
+                "8g",
+            ]
+            .map(str::to_owned),
+        );
+        args.extend(self.user.args());
+        for mount in &self.mounts {
+            args.push("--mount".to_owned());
+            args.push(mount.clone());
+        }
+        for (key, value) in &self.env {
+            args.push("--env".to_owned());
+            args.push(format!("{key}={value}"));
+        }
+        args.push("--workdir".to_owned());
+        args.push(self.workdir.clone());
+        args.push(self.image.clone());
+        args.extend(self.argv.iter().cloned());
+        args
+    }
+}
+
+fn mount(source: &Path, target: &str, read_only: bool) -> Result<String> {
+    let text = source
+        .to_str()
+        .ok_or_else(|| Error::new(format!("{} is not valid UTF-8", source.display())))?;
+    if text.contains([',', '"']) {
+        return Err(Error::new(format!(
+            "the path {text} contains a comma or quote, which a container mount cannot \
+             express; set PROOFATHOME_HOME to a simpler path"
+        )));
+    }
+    let mut mount = format!("type=bind,source={text},target={target}");
+    if read_only {
+        mount.push_str(",readonly");
+    }
+    Ok(mount)
+}
+
+fn container_name(problem: &Problem, step: &str) -> String {
+    format!("pah-{}-{step}-{}", problem.id, &random_hex()[..12])
+}
+
+/// The fetch step: network on, repository read-only, cache writable.
+pub fn fetch_spec(
+    problem: &Problem,
+    workspace: &Path,
+    cache: &Path,
+    user: &UserMapping,
+) -> Result<ContainerSpec> {
+    let command = problem.check_command();
+    let argv = command
+        .fetch_argv()
+        .ok_or_else(|| Error::new("this check has no dependencies to fetch"))?;
+    Ok(ContainerSpec {
+        name: container_name(problem, "fetch"),
+        image: problem.checker.image.to_string(),
+        network: true,
+        user: user.clone(),
+        mounts: vec![
+            mount(workspace, CONTAINER_WORKDIR, true)?,
+            mount(cache, CARGO_CACHE_TARGET, false)?,
+        ],
+        env: vec![("CARGO_HOME".to_owned(), CARGO_CACHE_TARGET.to_owned())],
+        workdir: command.workdir,
+        argv,
+    })
+}
+
+/// The check step: no network, repository read-only, and for Cargo checks
+/// the cache read-only with Cargo offline.
+pub fn check_spec(
+    problem: &Problem,
+    workspace: &Path,
+    cache: Option<&Path>,
+    user: &UserMapping,
+) -> Result<ContainerSpec> {
+    let command = problem.check_command();
+    let mut mounts = vec![mount(workspace, CONTAINER_WORKDIR, true)?];
+    let mut env = Vec::new();
+    if let Some(cache) = cache {
+        mounts.push(mount(cache, CARGO_CACHE_TARGET, true)?);
+        env.push(("CARGO_HOME".to_owned(), CARGO_CACHE_TARGET.to_owned()));
+        env.push(("CARGO_NET_OFFLINE".to_owned(), "true".to_owned()));
+    }
+    Ok(ContainerSpec {
+        name: container_name(problem, "check"),
+        image: problem.checker.image.to_string(),
+        network: false,
+        user: user.clone(),
+        mounts,
+        env,
+        workdir: command.workdir,
+        argv: command.argv,
+    })
+}
+
+/// Runs one container and waits at most `timeout`.
+pub fn run_container(
+    runtime: &Path,
+    spec: &ContainerSpec,
+    timeout: Duration,
+) -> Result<ContainerRun> {
+    let mut command = Command::new(runtime);
+    command
+        .args(spec.args())
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let start = Instant::now();
+    let mut child = command
+        .spawn()
+        .map_err(|e| Error::new(format!("cannot run {}: {e}", runtime.display())))?;
+    let tail = Arc::new(Mutex::new(Tail::default()));
+    let readers = [
+        child
+            .stdout
+            .take()
+            .map(|out| collect(out, Arc::clone(&tail))),
+        child
+            .stderr
+            .take()
+            .map(|err| collect(err, Arc::clone(&tail))),
+    ];
+
+    let (exit_code, timed_out) = wait_with_timeout(&mut child, timeout, || {
+        let _ = Command::new(runtime)
+            .args(["kill", &spec.name])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    })?;
+    if !timed_out {
+        for reader in readers.into_iter().flatten() {
+            let _ = reader.join();
+        }
+    }
+    let duration_ms = start.elapsed().as_millis() as u64;
+    let mut output_tail = tail.lock().map(|t| t.render()).unwrap_or_default();
+    if timed_out {
+        output_tail.push_str(&format!(
+            "\n[proofathome: stopped after {} s, the local time limit]\n",
+            timeout.as_secs()
+        ));
+    }
+    Ok(ContainerRun {
+        passed: !timed_out && exit_code == Some(0),
+        timed_out,
+        exit_code,
+        duration_ms,
+        output_tail,
+    })
 }
 
 /// A changed path from `git status --porcelain=v1 -z`.
@@ -175,111 +495,6 @@ pub fn container_runtime() -> Result<PathBuf> {
         })
 }
 
-/// The arguments after the runtime program.
-pub fn container_args(problem: &Problem, workspace: &Path, name: &str) -> Result<Vec<String>> {
-    let source = workspace
-        .to_str()
-        .ok_or_else(|| Error::new(format!("{} is not valid UTF-8", workspace.display())))?;
-    if source.contains([',', '"']) {
-        return Err(Error::new(format!(
-            "the workspace path {source} contains a comma or quote, which a container \
-             mount cannot express; set PROOFATHOME_HOME to a simpler path"
-        )));
-    }
-    let command = problem.check_command();
-    let mut mount = format!("type=bind,source={source},target=/work");
-    if !command.writable {
-        mount.push_str(",readonly");
-    }
-    let mut args: Vec<String> = [
-        "run",
-        "--rm",
-        "--name",
-        name,
-        "--network",
-        "none",
-        "--cap-drop",
-        "ALL",
-        "--security-opt",
-        "no-new-privileges",
-        "--pids-limit",
-        "512",
-        "--memory",
-        "8g",
-        "--mount",
-        &mount,
-        "--workdir",
-        &command.workdir,
-        &problem.checker.image.to_string(),
-    ]
-    .into_iter()
-    .map(str::to_owned)
-    .collect();
-    args.extend(command.argv);
-    Ok(args)
-}
-
-/// Runs the checker container and waits at most `timeout`.
-pub fn run_checker(
-    problem: &Problem,
-    workspace: &Path,
-    runtime: &Path,
-    timeout: Duration,
-) -> Result<CheckerRun> {
-    let name = format!("pah-{}-{}", problem.id, &random_hex()[..12]);
-    let args = container_args(problem, workspace, &name)?;
-    let mut command = Command::new(runtime);
-    command
-        .args(&args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let start = Instant::now();
-    let mut child = command
-        .spawn()
-        .map_err(|e| Error::new(format!("cannot run {}: {e}", runtime.display())))?;
-    let tail = Arc::new(Mutex::new(Tail::default()));
-    let readers = [
-        child
-            .stdout
-            .take()
-            .map(|out| collect(out, Arc::clone(&tail))),
-        child
-            .stderr
-            .take()
-            .map(|err| collect(err, Arc::clone(&tail))),
-    ];
-
-    let (exit_code, timed_out) = wait_with_timeout(&mut child, timeout, || {
-        let _ = Command::new(runtime)
-            .args(["kill", &name])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-    })?;
-    if !timed_out {
-        for reader in readers.into_iter().flatten() {
-            let _ = reader.join();
-        }
-    }
-    let duration_ms = start.elapsed().as_millis() as u64;
-    let mut output_tail = tail.lock().map(|t| t.render()).unwrap_or_default();
-    if timed_out {
-        output_tail.push_str(&format!(
-            "\n[proofathome: stopped after {} s, the local time limit]\n",
-            timeout.as_secs()
-        ));
-    }
-    Ok(CheckerRun {
-        passed: !timed_out && exit_code == Some(0),
-        timed_out,
-        exit_code,
-        duration_ms,
-        output_tail,
-    })
-}
-
 /// Waits for `child`. On timeout, calls `stop` and kills the child.
 /// Returns the exit code and whether the timeout hit.
 fn wait_with_timeout(
@@ -367,6 +582,23 @@ impl Tail {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn podman_keeps_the_calling_user() {
+        let home = std::env::temp_dir();
+        assert_eq!(
+            UserMapping::for_runtime(Path::new("/usr/bin/podman"), &home),
+            UserMapping::KeepId
+        );
+        assert_eq!(UserMapping::KeepId.args(), ["--userns=keep-id"]);
+        let docker = UserMapping::for_runtime(Path::new("/usr/bin/docker"), &home);
+        if cfg!(unix) {
+            assert!(matches!(docker, UserMapping::User(_)));
+        } else {
+            assert_eq!(docker, UserMapping::Default);
+            assert!(docker.args().is_empty());
+        }
+    }
 
     #[test]
     fn parses_porcelain_with_renames() {
