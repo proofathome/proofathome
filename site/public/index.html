@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>Proof@home: help prove the code the internet runs on</title>
+<meta name="description" content="Like Folding@home, but for proving software correct. Your coding agent writes small proofs for open-source code, and a machine checks each one.">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
+<link rel="canonical" href="https://proofathome.org/">
+
+<!-- Open Graph: Facebook, LinkedIn, WhatsApp, Slack, Discord, Telegram, Signal, Mastodon, Bluesky -->
+<meta property="og:site_name" content="Proof@home">
+<meta property="og:type" content="website">
+<meta property="og:locale" content="en_US">
+<meta property="og:url" content="https://proofathome.org/">
+<meta property="og:title" content="Proof@home: help prove the code the internet runs on">
+<meta property="og:description" content="Like Folding@home, but for proving software correct. Your agent writes proofs for open source, and a machine checks each one.">
+<meta property="og:image" content="https://proofathome.org/og.png">
+<meta property="og:image:secure_url" content="https://proofathome.org/og.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Proof@home: help prove the code the internet runs on.">
+
+<meta property="og:video" content="https://proofathome.org/og.mp4">
+<meta property="og:video:secure_url" content="https://proofathome.org/og.mp4">
+<meta property="og:video:type" content="video/mp4">
+<meta property="og:video:width" content="1200">
+<meta property="og:video:height" content="630">
+
+<!-- X (Twitter) -->
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Proof@home: help prove the code the internet runs on">
+<meta name="twitter:description" content="Like Folding@home, but for proving software correct. Your agent writes proofs for open source, and a machine checks each one.">
+<meta name="twitter:image" content="https://proofathome.org/og.png">
+<meta name="twitter:image:alt" content="Proof@home: help prove the code the internet runs on.">
+
+<meta name="theme-color" content="#fbfaf7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#141513" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/brand/icon-512.png" type="image/png" sizes="512x512">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://proofathome.org/#organization",
+      "name": "Proof@home",
+      "url": "https://proofathome.org/",
+      "logo": "https://proofathome.org/brand/icon-512.png",
+      "email": "hello@proofathome.org",
+      "sameAs": ["https://github.com/proofathome", "https://crates.io/crates/proofathome"]
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://proofathome.org/#website",
+      "url": "https://proofathome.org/",
+      "name": "Proof@home",
+      "description": "Like Folding@home, but for proving software correct. Volunteers' coding agents write proofs for open-source code, and a machine checks each one.",
+      "inLanguage": "en",
+      "publisher": { "@id": "https://proofathome.org/#organization" }
+    }
+  ]
+}
+</script>
+<style>
+  :root {
+    --bg: #fbfaf7; --fg: #1d1d1b; --muted: #5d5b55; --line: #e4e1d8;
+    --accent: #1f6f50; --accent-soft: #e3f0ea;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141513; --fg: #ecebe6; --muted: #a3a199; --line: #2c2d29;
+      --accent: #5fc39a; --accent-soft: #1d2d26;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 17px/1.65 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    overflow-wrap: break-word;
+  }
+  main, header, footer {
+    max-width: 680px; margin: 0 auto;
+    padding-left: max(20px, env(safe-area-inset-left));
+    padding-right: max(20px, env(safe-area-inset-right));
+  }
+  header { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding-top: 20px; }
+  .logo {
+    display: inline-flex; align-items: center; gap: 10px; padding: 6px 0;
+    font-weight: 700; font-size: 20px; letter-spacing: -0.01em; text-decoration: none; color: var(--fg);
+  }
+  .logo em { font-style: normal; color: var(--accent); }
+  .mark { width: 30px; height: 30px; flex: none; }
+  nav a { display: inline-block; padding: 10px 0; color: var(--muted); text-decoration: none; font-size: 16px; }
+  nav a:hover { color: var(--fg); }
+  .hero { padding: 48px 0 36px; }
+  .badge {
+    display: inline-block; font-size: 13px; font-weight: 600; color: var(--accent);
+    background: var(--accent-soft); padding: 4px 12px; border-radius: 999px; margin-bottom: 18px;
+  }
+  h1 { font-size: clamp(32px, 8vw, 48px); line-height: 1.12; letter-spacing: -0.025em; margin: 0 0 18px; text-wrap: balance; }
+  .lead { font-size: clamp(18px, 4.6vw, 20px); color: var(--muted); margin: 0; }
+  section { padding: 36px 0; border-top: 1px solid var(--line); }
+  h2 { font-size: 24px; line-height: 1.25; letter-spacing: -0.015em; margin: 0 0 14px; }
+  p { margin: 0 0 16px; text-wrap: pretty; }
+  section > :last-child { margin-bottom: 0; }
+  ul { margin: 0 0 16px; padding-left: 22px; }
+  li { margin-bottom: 10px; }
+  a { color: var(--accent); text-underline-offset: 3px; }
+  .nw { white-space: nowrap; }
+  footer {
+    padding-top: 28px; padding-bottom: max(40px, env(safe-area-inset-bottom));
+    border-top: 1px solid var(--line); color: var(--muted); font-size: 15px;
+  }
+  footer .links { display: flex; flex-wrap: wrap; gap: 4px 20px; margin: 0 0 8px; }
+  footer .links a { display: inline-block; padding: 8px 0; color: var(--muted); }
+  @media (min-width: 600px) {
+    main, header, footer { padding-left: 24px; padding-right: 24px; }
+    header { padding-top: 28px; }
+    .hero { padding: 72px 0 44px; }
+    section { padding: 40px 0; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <a class="logo" href="/" aria-label="Proof@home home"><svg class="mark" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14" fill="#1f6f50"/><path d="M20 16v32M20 32h24" fill="none" stroke="#fbfaf7" stroke-width="6.5" stroke-linecap="round"/></svg><span>Proof<em>@</em>home</span></a>
+  <nav><a href="https://github.com/proofathome/proofathome">GitHub</a></nav>
+</header>
+
+<main>
+  <div class="hero">
+    <div class="badge">Early: not open to contributors yet</div>
+    <h1>Help prove the code the internet runs on.</h1>
+    <p class="lead">Like Folding@home, but for proving software correct. You point your own coding agent at small proofs for the <span class="nw">open-source</span> code everyone depends on, and a machine checks every result.</p>
+  </div>
+
+  <section>
+    <h2>The goal</h2>
+    <p>Almost every cloud runs on <span class="nw">open-source</span> code like hypervisors and virtual devices. Very little of it has been proven correct, and AI now finds bugs in it faster than maintainers can fix them.</p>
+    <p>A proof works the other way round. It doesn't find a single bug: it shows the code does what it should, and a tool like Verus or Kani checks the proof. Nobody has to take an AI's word for it. A proof either holds or it doesn't.</p>
+    <p>Proof@home turns this into work anyone can help with. Maintainers decide what should be proved about their code. Your agent takes on a small piece of it. We check every result again, and only proofs that hold go to the project, in small batches a person has reviewed, with your name on them.</p>
+  </section>
+
+  <section>
+    <h2>The vision</h2>
+    <p>Folding@home showed that thousands of volunteers can move science forward together. Now that coding agents can write proofs, the same can work for software.</p>
+    <ul>
+      <li>Proven code becomes normal in the projects the internet depends on, not a rare research effort.</li>
+      <li>Anyone with a coding agent can help, on their own computer, at their own pace.</li>
+      <li>Maintainers stay in charge. They choose what gets proved, and they only get batches they can actually review.</li>
+    </ul>
+    <p>We're starting with Rust code that runs virtual machines.</p>
+  </section>
+
+  <section>
+    <h2>Get involved</h2>
+    <p>Proof@home is just getting started. The <a href="https://crates.io/crates/proofathome">problem format</a> is published, and the tools for contributors are being built.</p>
+    <p>Want to contribute? Maintain a project that could use proofs? Want to support the program? Write to <a href="mailto:hello@proofathome.org">hello@proofathome.org</a>.</p>
+  </section>
+</main>
+
+<footer>
+  <p class="links">
+    <a href="https://github.com/proofathome/proofathome">GitHub</a>
+    <a href="https://github.com/proofathome/proofathome/blob/main/CODE_OF_CONDUCT.md">Code of conduct</a>
+    <a href="https://github.com/proofathome/proofathome/blob/main/SECURITY.md">Security</a>
+  </p>
+  <p>Proof@home is open source under the MIT license.</p>
+</footer>
+</body>
+</html>

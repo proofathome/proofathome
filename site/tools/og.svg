@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <pattern id="dots" width="28" height="28" patternUnits="userSpaceOnUse"><circle cx="14" cy="14" r="1.6" fill="#34362f"/></pattern>
+    <linearGradient id="fade" x1="0" x2="1"><stop offset="0.35" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#fff"/></linearGradient>
+    <mask id="dotmask"><rect width="1200" height="630" fill="url(#fade)"/></mask>
+    <radialGradient id="glow" cx="0.82" cy="0.2" r="0.55"><stop offset="0" stop-color="#1f6f50" stop-opacity="0.35"/><stop offset="1" stop-color="#1f6f50" stop-opacity="0"/></radialGradient>
+    <g id="ok"><circle r="15" fill="#1d2d26"/><path d="M-6 0.5l4 4 8-9" fill="none" stroke="#5fc39a" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/></g>
+  </defs>
+  <rect width="1200" height="630" fill="#141513"/>
+  <rect width="1200" height="630" fill="url(#dots)" mask="url(#dotmask)"/>
+  <rect width="1200" height="630" fill="url(#glow)"/>
+
+  <g transform="translate(80 76)">
+    <rect width="60" height="60" rx="13" fill="#1f6f50"/>
+    <path d="M18.75 15v30M18.75 30h22.5" fill="none" stroke="#fbfaf7" stroke-width="6.1" stroke-linecap="round"/>
+  </g>
+  <text x="158" y="119" font-family="Segoe UI, sans-serif" font-size="38" font-weight="700" letter-spacing="-0.7" fill="#ecebe6">Proof<tspan fill="#5fc39a">@</tspan>home</text>
+
+  <g font-family="Segoe UI, sans-serif" font-size="64" font-weight="700" letter-spacing="-1.5" fill="#ecebe6">
+    <text x="80" y="290">Help prove</text>
+    <text x="80" y="370">the code the</text>
+    <text x="80" y="450" fill="#5fc39a">internet runs on.</text>
+  </g>
+  <text x="80" y="556" font-family="Segoe UI, sans-serif" font-size="28" fill="#a3a199">proofathome.org</text>
+
+  <g transform="translate(724 178)">
+    <rect width="396" height="300" rx="18" fill="#1a1b18" stroke="#2c2d29" stroke-width="2"/>
+    <text x="30" y="48" font-family="Cascadia Mono, Consolas, monospace" font-size="17" fill="#a3a199">recently checked proofs</text>
+    <path d="M0 72h396" stroke="#2c2d29" stroke-width="2"/>
+    <g font-family="Cascadia Mono, Consolas, monospace" font-size="21" fill="#ecebe6">
+      <use href="#ok" x="45" y="112"/><text x="74" y="119">virtio_queue_bounds</text>
+      <use href="#ok" x="45" y="164"/><text x="74" y="171">vsock_credit_safe</text>
+      <use href="#ok" x="45" y="216"/><text x="74" y="223">blk_sector_in_range</text>
+      <circle cx="45" cy="268" r="13.5" fill="none" stroke="#5d5b55" stroke-width="2.4" stroke-dasharray="5 4"/>
+      <text x="74" y="275" fill="#a3a199">net_rx_no_overflow</text>
+    </g>
+  </g>
+</svg>

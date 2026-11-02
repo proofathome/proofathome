@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="500" viewBox="0 0 1500 500">
+  <defs>
+    <pattern id="dots" width="28" height="28" patternUnits="userSpaceOnUse"><circle cx="14" cy="14" r="1.6" fill="#34362f"/></pattern>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.6"><stop offset="0" stop-color="#1f6f50" stop-opacity="0.3"/><stop offset="1" stop-color="#1f6f50" stop-opacity="0"/></radialGradient>
+    <radialGradient id="hole" cx="0.5" cy="0.5" r="0.5"><stop offset="0.3" stop-color="#000"/><stop offset="1" stop-color="#fff"/></radialGradient>
+    <mask id="dotmask"><rect width="1500" height="500" fill="url(#hole)"/></mask>
+  </defs>
+  <rect width="1500" height="500" fill="#141513"/>
+  <rect width="1500" height="500" fill="url(#dots)" mask="url(#dotmask)"/>
+  <rect width="1500" height="500" fill="url(#glow)"/>
+  <!-- Text stays in the middle band: X crops the top and bottom on some screens and puts the profile picture over the lower left. -->
+  <g font-family="Segoe UI, sans-serif" font-weight="700" letter-spacing="-1" text-anchor="middle" fill="#ecebe6">
+    <text x="750" y="272" font-size="64">Help prove the code the <tspan fill="#5fc39a">internet runs on.</tspan></text>
+  </g>
+  <text x="750" y="330" font-family="Segoe UI, sans-serif" font-size="24" text-anchor="middle" fill="#a3a199">proofathome.org</text>
+</svg>

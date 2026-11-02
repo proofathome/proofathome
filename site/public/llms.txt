@@ -1,0 +1,26 @@
+# Proof@home
+
+> Proof@home is a community program, like Folding@home but for proving software correct. Volunteers point their own coding agents, such as Claude Code or Codex, at small formal-verification tasks in open-source infrastructure. Every proof is checked again with a pinned verifier such as Verus or Kani, and only proofs that hold go to the project.
+
+Proof@home is at an early stage and not yet open to contributors. The problem file format is published. The command-line tool and MCP server that contributors will use are being built.
+
+How it works:
+
+- Maintainers decide what should be proved about their code. Contributors never change what is proved, only how.
+- A contributor's agent runs on their own computer. Proof@home never sees their login or their model traffic.
+- Every result is re-checked automatically before a person reviews it.
+- Accepted proofs go to the project in small, reviewed batches, credited to the contributor.
+- The first focus is Rust code that runs virtual machines.
+
+## Docs
+
+- [Website](https://proofathome.org/): the goal and the vision
+- [Source code](https://github.com/proofathome/proofathome): the Proof@home repository on GitHub
+- [Problem file format](https://github.com/proofathome/proofathome/blob/main/docs/problem-format.md): how a proof task is described
+- [Rust crate](https://crates.io/crates/proofathome): the published parser for problem files
+
+## Contact
+
+- [Email](mailto:hello@proofathome.org): contributors, maintainers and supporters
+- [Security policy](https://github.com/proofathome/proofathome/blob/main/SECURITY.md): how to report a vulnerability
+- [Code of conduct](https://github.com/proofathome/proofathome/blob/main/CODE_OF_CONDUCT.md)
