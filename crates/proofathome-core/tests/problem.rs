@@ -1,4 +1,6 @@
-use proofathome::{CheckerTool, EditMode, MAX_PROBLEM_FILE_BYTES, ParseError, Problem, Size};
+use proofathome_core::{
+    Check, CheckCommand, CheckerTool, EditMode, MAX_PROBLEM_FILE_BYTES, ParseError, Problem, Size,
+};
 
 const VALID: &str = include_str!("fixtures/ev-vsock-credit-0007.toml");
 
@@ -43,6 +45,14 @@ fn parses_the_valid_fixture() {
     assert_eq!(p.project, "example-virtio");
     assert_eq!(p.checker.tool, CheckerTool::Verus);
     assert_eq!(p.checker.version, "0.2026.10.26.d17fbd0");
+    assert_eq!(p.checker.image.name, "ghcr.io/proofathome/verus");
+    assert_eq!(p.checker.image.digest, format!("sha256:{}", "0".repeat(64)));
+    assert_eq!(
+        p.check,
+        Check::Verus {
+            crate_root: "example-virtio/src/lib.rs".to_owned()
+        }
+    );
     assert_eq!(p.target.file, "example-virtio/src/vsock/credit.rs");
     assert_eq!(p.target.item, "peer_avail_credit");
     assert_eq!(p.mode, EditMode::GhostOnly);
@@ -60,6 +70,7 @@ fn accepts_a_kani_proof_files_problem() {
         .replace("tool = \"verus\"", "tool = \"kani\"")
         .replace("version = \"0.2026.10.26.d17fbd0\"", "version = \"0.66.0\"");
     let text = with_line_in(&text, "mode", "mode = \"proof-files\"");
+    let text = with_line_in(&text, "check", KANI_CHECK);
     let text = with_line_in(
         &text,
         "editable",
@@ -68,6 +79,13 @@ fn accepts_a_kani_proof_files_problem() {
     let p = Problem::from_toml_str(&text).unwrap();
     assert_eq!(p.checker.tool, CheckerTool::Kani);
     assert_eq!(p.mode, EditMode::ProofFiles);
+    assert_eq!(
+        p.check,
+        Check::Kani {
+            harness: "proofs::credit_wraps".to_owned(),
+            manifest_dir: Some("example-virtio".to_owned()),
+        }
+    );
 }
 
 fn with_line_in(text: &str, key: &str, line: &str) -> String {
@@ -152,10 +170,166 @@ fn refuses_short_or_uppercase_commits() {
 fn refuses_bad_checker_pins() {
     let text = VALID.replace("0.2026.10.26.d17fbd0", "latest; rm -rf /");
     assert_eq!(invalid_field(&text), "checker.version");
-    let text = VALID.replace("image = \"sha256:", "image = \"sha512:");
-    assert_eq!(invalid_field(&text), "checker.image");
-    let text = VALID.replace("image = \"sha256:", "image = \"ghcr.io/x/verus:");
-    assert_eq!(invalid_field(&text), "checker.image");
+}
+
+const IMAGE: &str = "ghcr.io/proofathome/verus@sha256:";
+
+fn with_image(image: &str) -> String {
+    let zeros = "0".repeat(64);
+    VALID.replace(&format!("{IMAGE}{zeros}"), image)
+}
+
+#[test]
+fn accepts_pinned_image_references() {
+    let zeros = "0".repeat(64);
+    for name in [
+        "verus",
+        "proofathome/verus",
+        "ghcr.io/proofathome/verus",
+        "localhost:5000/verus",
+        "registry.example.org:443/a/b/c_d.e-f",
+    ] {
+        let text = with_image(&format!("{name}@sha256:{zeros}"));
+        let p = Problem::from_toml_str(&text).unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert_eq!(p.checker.image.name, name);
+        assert_eq!(
+            p.checker.image.to_string(),
+            format!("{name}@sha256:{zeros}")
+        );
+    }
+}
+
+#[test]
+fn refuses_unpinned_or_malformed_images() {
+    let zeros = "0".repeat(64);
+    let long_name = "a".repeat(201);
+    for image in [
+        format!("sha256:{zeros}"),
+        format!("@sha256:{zeros}"),
+        "ghcr.io/x/verus:latest".to_owned(),
+        format!("ghcr.io/x/verus:1.0@sha256:{zeros}"),
+        format!("ghcr.io/x/verus@sha512:{zeros}"),
+        format!("ghcr.io/x/verus@sha256:{}", "0".repeat(63)),
+        format!("ghcr.io/x/verus@sha256:{}", "A".repeat(64)),
+        format!("ghcr.io/x/verus@sha256:{zeros}@sha256:{zeros}"),
+        format!("GHCR.io/x/verus@sha256:{zeros}"),
+        format!("ghcr.io//verus@sha256:{zeros}"),
+        format!("ghcr.io/x/verus/@sha256:{zeros}"),
+        format!("ghcr.io/-x/verus@sha256:{zeros}"),
+        format!("ghcr.io:port/verus@sha256:{zeros}"),
+        format!("ghcr.io:123456/verus@sha256:{zeros}"),
+        format!("ghcr.io/x y/verus@sha256:{zeros}"),
+        format!("{long_name}@sha256:{zeros}"),
+    ] {
+        assert_eq!(
+            invalid_field(&with_image(&image)),
+            "checker.image",
+            "image {image:?}"
+        );
+    }
+}
+
+const KANI_CHECK: &str =
+    "check = { harness = \"proofs::credit_wraps\", manifest_dir = \"example-virtio\" }";
+
+fn kani(check_line: &str) -> String {
+    let text = VALID.replace("tool = \"verus\"", "tool = \"kani\"");
+    with_line_in(&text, "check", check_line)
+}
+
+#[test]
+fn verus_runs_a_fixed_command_read_only() {
+    let p = Problem::from_toml_str(VALID).unwrap();
+    assert_eq!(
+        p.check_command(),
+        CheckCommand {
+            argv: vec![
+                "verus".to_owned(),
+                "--crate-type=lib".to_owned(),
+                "example-virtio/src/lib.rs".to_owned(),
+            ],
+            workdir: "/work".to_owned(),
+            writable: false,
+        }
+    );
+}
+
+#[test]
+fn kani_runs_a_fixed_command_in_the_manifest_dir() {
+    let p = Problem::from_toml_str(&kani(KANI_CHECK)).unwrap();
+    let command = p.check_command();
+    assert_eq!(
+        command.argv,
+        ["cargo", "kani", "--harness", "proofs::credit_wraps"]
+    );
+    assert_eq!(command.workdir, "/work/example-virtio");
+    assert!(command.writable);
+
+    let p = Problem::from_toml_str(&kani("check = { harness = \"credit_wraps\" }")).unwrap();
+    assert_eq!(
+        p.check,
+        Check::Kani {
+            harness: "credit_wraps".to_owned(),
+            manifest_dir: None,
+        }
+    );
+    assert_eq!(p.check_command().workdir, "/work");
+}
+
+#[test]
+fn refuses_check_keys_for_the_wrong_tool() {
+    let text = with_line("check", "check = { harness = \"proofs::h\" }");
+    assert_eq!(invalid_field(&text), "check");
+    let text = with_line(
+        "check",
+        "check = { crate_root = \"src/lib.rs\", manifest_dir = \"x\" }",
+    );
+    assert_eq!(invalid_field(&text), "check");
+    let text = kani("check = { crate_root = \"src/lib.rs\" }");
+    assert_eq!(invalid_field(&text), "check");
+    let text = kani("check = { harness = \"h\", crate_root = \"src/lib.rs\" }");
+    assert_eq!(invalid_field(&text), "check");
+}
+
+#[test]
+fn refuses_missing_check_keys() {
+    assert_eq!(invalid_field(&with_line("check", "check = {}")), "check");
+    assert_eq!(invalid_field(&kani("check = {}")), "check");
+    assert_eq!(
+        invalid_field(&kani("check = { manifest_dir = \"x\" }")),
+        "check"
+    );
+    assert_toml_error(&with_line("check", ""));
+}
+
+#[test]
+fn refuses_unknown_check_keys() {
+    assert_toml_error(&with_line(
+        "check",
+        "check = { crate_root = \"src/lib.rs\", command = \"sh\" }",
+    ));
+    assert_toml_error(&kani("check = { harness = \"h\", args = [\"--x\"] }"));
+}
+
+#[test]
+fn refuses_bad_check_values() {
+    for line in [
+        "check = { crate_root = \"src/lib.txt\" }",
+        "check = { crate_root = \"../lib.rs\" }",
+        "check = { crate_root = \"/src/lib.rs\" }",
+    ] {
+        assert_eq!(invalid_field(&with_line("check", line)), "check", "{line}");
+    }
+    for line in [
+        "check = { harness = \"\" }",
+        "check = { harness = \"proofs::\" }",
+        "check = { harness = \"a b\" }",
+        "check = { harness = \"--all\" }",
+        "check = { harness = \"h\", manifest_dir = \"../x\" }",
+        "check = { harness = \"h\", manifest_dir = \"x/\" }",
+    ] {
+        assert_eq!(invalid_field(&kani(line)), "check", "{line}");
+    }
 }
 
 #[test]
