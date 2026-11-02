@@ -1,0 +1,36 @@
+name: Release
+
+# Push a tag `vX.Y.Z` on a commit in main to publish version X.Y.Z to crates.io.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check the tag is on main and matches the crate version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main \
+            || { echo "::error::$TAG is not on main"; exit 1; }
+          version=$(cargo metadata --locked --no-deps --format-version 1 | jq -r '.packages[0].version')
+          [ "$TAG" = "v$version" ] \
+            || { echo "::error::tag $TAG does not match crate version $version"; exit 1; }
+      - run: cargo test --locked
+      - run: cargo publish --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

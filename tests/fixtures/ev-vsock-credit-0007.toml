@@ -1,0 +1,13 @@
+id = "ev-vsock-credit-0007"
+project = "example-virtio"
+repo = "https://github.com/proofathome/example-virtio"
+commit = "0123456789abcdef0123456789abcdef01234567"
+checker = { tool = "verus", version = "0.2026.10.26.d17fbd0", image = "sha256:0000000000000000000000000000000000000000000000000000000000000000" }
+target = "example-virtio/src/vsock/credit.rs::peer_avail_credit"
+spec_files = { "example-virtio/src/vsock/credit_spec.rs" = "1111111111111111111111111111111111111111111111111111111111111111" }
+editable = ["example-virtio/src/vsock/credit.rs", "example-virtio/src/vsock/credit_proof.rs"]
+mode = "ghost-only"
+time_budget_s = 120
+size = "S"
+difficulty = 3
+hints = "The credit counters wrap. See the spec quotes in docs/vsock.md."

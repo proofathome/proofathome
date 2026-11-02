@@ -1,0 +1,17 @@
+[package]
+name = "proofathome"
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.85"
+description = "Proof@home: volunteer coding agents writing machine-checked proofs for open-source infrastructure"
+license = "MIT"
+repository = "https://github.com/proofathome/proofathome"
+homepage = "https://proofathome.org"
+readme = "README.md"
+keywords = ["verification", "verus", "kani", "formal-methods", "proofs"]
+categories = ["development-tools"]
+include = ["src/**", "README.md", "LICENSE"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+toml = "1"

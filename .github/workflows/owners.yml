@@ -1,0 +1,33 @@
+name: Crate owners
+
+# Adds a GitHub team of this organisation as a crates.io owner of the crate.
+# Team owners can publish but cannot change owners. The token's user must be
+# a member of the team, and the organisation must allow the crates.io app.
+
+on:
+  workflow_dispatch:
+    inputs:
+      team:
+        description: "Team slug in the proofathome organisation"
+        required: true
+        default: "maintainers"
+
+permissions:
+  contents: read
+
+jobs:
+  add-team:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Add the team as owner
+        env:
+          TEAM: ${{ inputs.team }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          [[ "$TEAM" =~ ^[a-z0-9][a-z0-9-]{0,38}$ ]] \
+            || { echo "::error::not a team slug: $TEAM"; exit 1; }
+          cargo owner --add "github:proofathome:$TEAM" proofathome
+          cargo owner --list proofathome
