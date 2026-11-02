@@ -119,7 +119,7 @@ Runs the MCP server on stdin and stdout. Your agent starts it; you do not run it
 
 ### `proofathome start`
 
-Runs your agent on problems, unattended, one session per problem, within a budget. Only Claude Code is supported so far (`--agent claude`, the default). It uses your own Claude login; Proof@home never passes or reads credentials.
+Runs your agent on problems, one session per problem, until the budget you set is used up. Only Claude Code is supported so far (`--agent claude`, the default). It uses your own Claude login, or your API key if `ANTHROPIC_API_KEY` is set; Proof@home never passes or reads credentials.
 
 | Option | Meaning |
 | --- | --- |
