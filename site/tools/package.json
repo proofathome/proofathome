@@ -1,0 +1,7 @@
+{
+  "private": true,
+  "description": "Renders the site's PNG images from the SVG sources. Run `npm install && npm run render` in this directory.",
+  "type": "module",
+  "scripts": { "render": "node render.mjs", "animate": "node animate.mjs" },
+  "devDependencies": { "@resvg/resvg-js": "2.6.2" }
+}
