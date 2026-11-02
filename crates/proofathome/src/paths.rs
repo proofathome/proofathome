@@ -98,6 +98,11 @@ impl Home {
     pub fn tmp_dir(&self) -> PathBuf {
         self.root.join("tmp")
     }
+
+    /// Download caches, such as `cache/cargo-verus`.
+    pub fn cache_dir(&self) -> PathBuf {
+        self.root.join("cache")
+    }
 }
 
 fn non_empty_var(name: &str) -> Option<OsString> {

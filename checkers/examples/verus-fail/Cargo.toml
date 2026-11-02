@@ -1,0 +1,15 @@
+# Smoke test for the Verus checker image. Its own workspace, so the
+# repository's workspace does not pick it up.
+[workspace]
+
+[package]
+name = "verus-fail"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+vstd = "=0.0.0-2026-10-25-0158"
+
+[package.metadata.verus]
+verify = true

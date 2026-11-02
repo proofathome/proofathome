@@ -96,10 +96,18 @@ impl fmt::Display for ImageRef {
 /// `checker.tool`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Check {
-    /// Verus checks one crate, given by its root file.
-    Verus {
+    /// Verus checks one standalone file with no dependencies besides the
+    /// `vstd` that ships with Verus.
+    VerusFile {
         /// Repository-relative path of the crate root, for example `src/lib.rs`.
         crate_root: String,
+    },
+    /// Verus checks a Cargo crate with `cargo verus focus`: the crate itself
+    /// is verified, and its locked dependencies such as `vstd` are trusted.
+    VerusCargo {
+        /// Repository-relative directory holding `Cargo.toml`. `None` is the
+        /// repository root.
+        manifest_dir: Option<String>,
     },
     /// Kani runs one harness in one Cargo package.
     Kani {
@@ -112,16 +120,28 @@ pub enum Check {
 }
 
 /// The command the checker container runs. It is fixed by the tool and never
-/// taken from the problem file.
+/// taken from the problem file. The repository is always mounted read-only;
+/// build output goes to `/tmp/target` inside the container.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckCommand {
     /// Program and arguments.
     pub argv: Vec<String>,
     /// Working directory inside the container. The repository is at `/work`.
     pub workdir: String,
-    /// Whether the checker writes into the repository (Kani's build output).
-    /// Verus gets a read-only mount.
-    pub writable: bool,
+    /// Whether this is a Cargo build whose dependencies must be fetched
+    /// first, with [`CheckCommand::fetch_argv`] in the same directory. The
+    /// check itself runs offline.
+    pub cargo: bool,
+}
+
+impl CheckCommand {
+    /// The command that downloads a Cargo check's dependencies, exactly as
+    /// pinned by its `Cargo.lock`. It runs no code from the crates. `None`
+    /// when nothing needs fetching.
+    pub fn fetch_argv(&self) -> Option<Vec<String>> {
+        self.cargo
+            .then(|| ["cargo", "fetch", "--locked"].map(str::to_owned).to_vec())
+    }
 }
 
 /// Where the repository is mounted inside the checker container.
@@ -268,38 +288,47 @@ struct RawChecker {
 #[serde(deny_unknown_fields)]
 struct RawCheck {
     crate_root: Option<String>,
+    cargo: Option<bool>,
     harness: Option<String>,
     manifest_dir: Option<String>,
+}
+
+fn manifest_workdir(manifest_dir: Option<&String>) -> String {
+    match manifest_dir {
+        Some(dir) => format!("{CONTAINER_WORKDIR}/{dir}"),
+        None => CONTAINER_WORKDIR.to_owned(),
+    }
+}
+
+fn argv(args: &[&str]) -> Vec<String> {
+    args.iter().map(|&arg| arg.to_owned()).collect()
 }
 
 impl Problem {
     /// The command the checker container runs for this problem.
     pub fn check_command(&self) -> CheckCommand {
         match &self.check {
-            Check::Verus { crate_root } => CheckCommand {
-                argv: vec![
-                    "verus".to_owned(),
-                    "--crate-type=lib".to_owned(),
-                    crate_root.clone(),
-                ],
+            Check::VerusFile { crate_root } => CheckCommand {
+                argv: argv(&["verus", "--crate-type=lib", crate_root]),
                 workdir: CONTAINER_WORKDIR.to_owned(),
-                writable: false,
+                cargo: false,
             },
+            Check::VerusCargo { manifest_dir } => CheckCommand {
+                argv: argv(&["cargo", "verus", "focus", "--locked", "--offline"]),
+                workdir: manifest_workdir(manifest_dir.as_ref()),
+                cargo: true,
+            },
+            // `cargo kani` has no `--locked` or `--offline`. The check runs
+            // with `CARGO_NET_OFFLINE` and a read-only repository, so Cargo
+            // can neither download nor rewrite `Cargo.lock`. `--exact` stops
+            // `--harness` from also matching longer names.
             Check::Kani {
                 harness,
                 manifest_dir,
             } => CheckCommand {
-                argv: vec![
-                    "cargo".to_owned(),
-                    "kani".to_owned(),
-                    "--harness".to_owned(),
-                    harness.clone(),
-                ],
-                workdir: match manifest_dir {
-                    Some(dir) => format!("{CONTAINER_WORKDIR}/{dir}"),
-                    None => CONTAINER_WORKDIR.to_owned(),
-                },
-                writable: true,
+                argv: argv(&["cargo", "kani", "--harness", harness, "--exact"]),
+                workdir: manifest_workdir(manifest_dir.as_ref()),
+                cargo: true,
             },
         }
     }
@@ -556,26 +585,54 @@ fn is_image_path_segment(segment: &str) -> bool {
 fn parse_check(tool: CheckerTool, raw: RawCheck) -> Result<Check, ParseError> {
     match tool {
         CheckerTool::Verus => {
-            if raw.harness.is_some() || raw.manifest_dir.is_some() {
-                return Err(invalid(
+            if raw.harness.is_some() {
+                return Err(invalid("check", "`harness` is for kani, not verus"));
+            }
+            match (raw.crate_root, raw.cargo) {
+                (Some(crate_root), None) => {
+                    if raw.manifest_dir.is_some() {
+                        return Err(invalid(
+                            "check",
+                            "has `crate_root` and `manifest_dir`; use `crate_root` for one \
+                             standalone file, or `cargo = true` with an optional \
+                             `manifest_dir` for a Cargo crate",
+                        ));
+                    }
+                    check_rel_path("check", &crate_root)?;
+                    if !crate_root.ends_with(".rs") {
+                        return Err(invalid("check", "`crate_root` must be a `.rs` file"));
+                    }
+                    Ok(Check::VerusFile { crate_root })
+                }
+                (None, Some(true)) => {
+                    if let Some(dir) = &raw.manifest_dir {
+                        check_rel_path("check", dir)?;
+                    }
+                    Ok(Check::VerusCargo {
+                        manifest_dir: raw.manifest_dir,
+                    })
+                }
+                (Some(_), Some(_)) => Err(invalid(
                     "check",
-                    "may only have `crate_root` for verus; `harness` and `manifest_dir` are for kani",
-                ));
+                    "has `crate_root` and `cargo`; use only one",
+                )),
+                (None, Some(false)) => Err(invalid(
+                    "check",
+                    "has `cargo = false`; leave `cargo` out and set `crate_root` instead",
+                )),
+                (None, None) => Err(invalid(
+                    "check",
+                    "must have `crate_root` (one standalone file) or `cargo = true` \
+                     (a Cargo crate) for verus",
+                )),
             }
-            let Some(crate_root) = raw.crate_root else {
-                return Err(invalid("check", "must have `crate_root` for verus"));
-            };
-            check_rel_path("check", &crate_root)?;
-            if !crate_root.ends_with(".rs") {
-                return Err(invalid("check", "`crate_root` must be a `.rs` file"));
-            }
-            Ok(Check::Verus { crate_root })
         }
         CheckerTool::Kani => {
-            if raw.crate_root.is_some() {
+            if raw.crate_root.is_some() || raw.cargo.is_some() {
                 return Err(invalid(
                     "check",
-                    "may only have `harness` and `manifest_dir` for kani; `crate_root` is for verus",
+                    "may only have `harness` and `manifest_dir` for kani; \
+                     `crate_root` and `cargo` are for verus",
                 ));
             }
             let Some(harness) = raw.harness else {

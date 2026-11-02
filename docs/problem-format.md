@@ -8,7 +8,7 @@ project = "example-virtio"
 repo = "https://github.com/proofathome/example-virtio"
 commit = "0123456789abcdef0123456789abcdef01234567"
 checker = { tool = "verus", version = "0.2026.10.26.d17fbd0", image = "ghcr.io/proofathome/verus@sha256:<64 hex>" }
-check = { crate_root = "example-virtio/src/lib.rs" }
+check = { cargo = true, manifest_dir = "example-virtio" }
 target = "example-virtio/src/vsock/credit.rs::peer_avail_credit"
 spec_files = { "example-virtio/src/vsock/credit_spec.rs" = "<sha256>" }
 editable = ["example-virtio/src/vsock/credit.rs", "example-virtio/src/vsock/credit_proof.rs"]
@@ -55,13 +55,19 @@ A problem fits a budget when its size's upper bound is at most the remaining tok
 
 The command that runs inside the checker container is fixed by the tool. A problem file only names what to check; it can never supply a command or arguments. Unknown keys and keys that belong to the other tool are refused.
 
-| Tool | `check` | Command | Working directory | Repository mount |
-| --- | --- | --- | --- | --- |
-| `verus` | `{ crate_root = "<path>.rs" }` | `verus --crate-type=lib <crate_root>` | `/work` | read-only |
-| `kani` | `{ harness = "<item path>", manifest_dir = "<dir>" }` | `cargo kani --harness <harness>` | `/work/<manifest_dir>` | writable, for build output |
+| Kind | `check` | Command | Working directory |
+| --- | --- | --- | --- |
+| Verus, one standalone file | `{ crate_root = "<path>.rs" }` | `verus --crate-type=lib <crate_root>` | `/work` |
+| Verus, a Cargo crate | `{ cargo = true, manifest_dir = "<dir>" }` | `cargo verus focus --locked --offline` | `/work/<manifest_dir>` |
+| Kani | `{ harness = "<item path>", manifest_dir = "<dir>" }` | `cargo kani --harness <harness> --exact` | `/work/<manifest_dir>` |
 
-- `crate_root` is a repository-relative path to a `.rs` file.
-- `harness` is one or more Rust identifiers joined by `::`, for example `proofs::credit_wraps`.
+- `crate_root` is a repository-relative path to a `.rs` file. The file may use only the `vstd` that ships with Verus; there are no other dependencies.
+- For a Verus Cargo crate, set `cargo = true`. Verus needs exactly one of `crate_root` and `cargo = true`; `cargo = false` is refused. The crate depends on `vstd` from crates.io and has `[package.metadata.verus] verify = true`.
+- `harness` is one or more Rust identifiers joined by `::`, for example `proofs::credit_wraps`. `--exact` makes it match that harness only.
 - `manifest_dir` is optional. It is the repository-relative directory holding `Cargo.toml`; without it, the repository root is used.
 
-The repository is mounted at `/work` at the pinned commit plus the result's changes.
+The repository is mounted read-only at `/work`, at the pinned commit plus the result's changes. Build output goes to `/tmp/target` inside the container.
+
+### Cargo checks and dependencies
+
+Cargo-based checks (Verus with `cargo = true`, and Kani) use only the dependencies pinned by a committed `Cargo.lock`, found in `manifest_dir` or the nearest directory above it. Without one, the problem is broken. Dependencies are fetched first, in a separate step with network access that runs only `cargo fetch --locked`. The check itself runs without network, with Cargo offline. See [the CLI reference](cli.md#proofathome-check-id).

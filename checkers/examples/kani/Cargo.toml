@@ -1,0 +1,12 @@
+# Smoke test for the Kani checker image. Its own workspace, so the
+# repository's workspace does not pick it up.
+[workspace]
+
+[package]
+name = "kani-example"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }

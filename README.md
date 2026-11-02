@@ -63,10 +63,15 @@ if problem.size.fits(remaining_tokens) {
 }
 ```
 
+## Checkers
+
+Every result is checked in a pinned container image: Verus 0.2026.10.26.d17fbd0 (`ghcr.io/proofathome/verus`) or Kani 0.68.0 (`ghcr.io/proofathome/kani`). Problem files name the image by digest. The images run as any user, without network, with the repository read-only; Cargo dependencies are fetched in a separate step first. See [checkers/README.md](checkers/README.md) for what is in them and how to update them.
+
 ## Repository layout
 
 - `crates/proofathome-core`: the problem file format.
 - `crates/proofathome`: the CLI, the MCP server and the `start` runner.
+- `checkers`: the checker images and small example crates that test them.
 
 ## Development
 

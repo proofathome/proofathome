@@ -49,8 +49,8 @@ fn parses_the_valid_fixture() {
     assert_eq!(p.checker.image.digest, format!("sha256:{}", "0".repeat(64)));
     assert_eq!(
         p.check,
-        Check::Verus {
-            crate_root: "example-virtio/src/lib.rs".to_owned()
+        Check::VerusCargo {
+            manifest_dir: Some("example-virtio".to_owned())
         }
     );
     assert_eq!(p.target.file, "example-virtio/src/vsock/credit.rs");
@@ -238,10 +238,43 @@ fn kani(check_line: &str) -> String {
 }
 
 #[test]
-fn verus_runs_a_fixed_command_read_only() {
+fn verus_cargo_runs_a_fixed_offline_command() {
     let p = Problem::from_toml_str(VALID).unwrap();
+    let command = p.check_command();
     assert_eq!(
-        p.check_command(),
+        command,
+        CheckCommand {
+            argv: vec![
+                "cargo".to_owned(),
+                "verus".to_owned(),
+                "focus".to_owned(),
+                "--locked".to_owned(),
+                "--offline".to_owned(),
+            ],
+            workdir: "/work/example-virtio".to_owned(),
+            cargo: true,
+        }
+    );
+    assert_eq!(
+        command.fetch_argv().unwrap(),
+        ["cargo", "fetch", "--locked"]
+    );
+
+    let p = Problem::from_toml_str(&with_line("check", "check = { cargo = true }")).unwrap();
+    assert_eq!(p.check, Check::VerusCargo { manifest_dir: None });
+    assert_eq!(p.check_command().workdir, "/work");
+}
+
+#[test]
+fn verus_file_runs_a_fixed_command_without_dependencies() {
+    let text = with_line(
+        "check",
+        "check = { crate_root = \"example-virtio/src/lib.rs\" }",
+    );
+    let p = Problem::from_toml_str(&text).unwrap();
+    let command = p.check_command();
+    assert_eq!(
+        command,
         CheckCommand {
             argv: vec![
                 "verus".to_owned(),
@@ -249,9 +282,10 @@ fn verus_runs_a_fixed_command_read_only() {
                 "example-virtio/src/lib.rs".to_owned(),
             ],
             workdir: "/work".to_owned(),
-            writable: false,
+            cargo: false,
         }
     );
+    assert_eq!(command.fetch_argv(), None);
 }
 
 #[test]
@@ -260,10 +294,17 @@ fn kani_runs_a_fixed_command_in_the_manifest_dir() {
     let command = p.check_command();
     assert_eq!(
         command.argv,
-        ["cargo", "kani", "--harness", "proofs::credit_wraps"]
+        [
+            "cargo",
+            "kani",
+            "--harness",
+            "proofs::credit_wraps",
+            "--exact"
+        ]
     );
     assert_eq!(command.workdir, "/work/example-virtio");
-    assert!(command.writable);
+    assert!(command.cargo);
+    assert!(command.fetch_argv().is_some());
 
     let p = Problem::from_toml_str(&kani("check = { harness = \"credit_wraps\" }")).unwrap();
     assert_eq!(
@@ -278,17 +319,33 @@ fn kani_runs_a_fixed_command_in_the_manifest_dir() {
 
 #[test]
 fn refuses_check_keys_for_the_wrong_tool() {
-    let text = with_line("check", "check = { harness = \"proofs::h\" }");
-    assert_eq!(invalid_field(&text), "check");
-    let text = with_line(
-        "check",
+    for line in [
+        "check = { harness = \"proofs::h\" }",
+        "check = { cargo = true, harness = \"h\" }",
+    ] {
+        assert_eq!(invalid_field(&with_line("check", line)), "check", "{line}");
+    }
+    for line in [
+        "check = { crate_root = \"src/lib.rs\" }",
+        "check = { harness = \"h\", crate_root = \"src/lib.rs\" }",
+        "check = { harness = \"h\", cargo = true }",
+    ] {
+        assert_eq!(invalid_field(&kani(line)), "check", "{line}");
+    }
+}
+
+#[test]
+fn verus_needs_exactly_one_way_to_find_the_code() {
+    for line in [
         "check = { crate_root = \"src/lib.rs\", manifest_dir = \"x\" }",
-    );
-    assert_eq!(invalid_field(&text), "check");
-    let text = kani("check = { crate_root = \"src/lib.rs\" }");
-    assert_eq!(invalid_field(&text), "check");
-    let text = kani("check = { harness = \"h\", crate_root = \"src/lib.rs\" }");
-    assert_eq!(invalid_field(&text), "check");
+        "check = { crate_root = \"src/lib.rs\", cargo = true }",
+        "check = { cargo = false }",
+        "check = { cargo = false, crate_root = \"src/lib.rs\" }",
+        "check = { manifest_dir = \"x\" }",
+    ] {
+        assert_eq!(invalid_field(&with_line("check", line)), "check", "{line}");
+    }
+    assert_toml_error(&with_line("check", "check = { cargo = \"yes\" }"));
 }
 
 #[test]
@@ -308,6 +365,10 @@ fn refuses_unknown_check_keys() {
         "check",
         "check = { crate_root = \"src/lib.rs\", command = \"sh\" }",
     ));
+    assert_toml_error(&with_line(
+        "check",
+        "check = { cargo = true, args = [\"--x\"] }",
+    ));
     assert_toml_error(&kani("check = { harness = \"h\", args = [\"--x\"] }"));
 }
 
@@ -317,6 +378,8 @@ fn refuses_bad_check_values() {
         "check = { crate_root = \"src/lib.txt\" }",
         "check = { crate_root = \"../lib.rs\" }",
         "check = { crate_root = \"/src/lib.rs\" }",
+        "check = { cargo = true, manifest_dir = \"../x\" }",
+        "check = { cargo = true, manifest_dir = \"\" }",
     ] {
         assert_eq!(invalid_field(&with_line("check", line)), "check", "{line}");
     }

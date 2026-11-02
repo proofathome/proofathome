@@ -139,7 +139,7 @@ impl App {
             self.backend.renew(id)?;
         }
         let path = workspace::open(&self.home, &entry.problem)?;
-        let result = check::run(&entry.problem, &path)?;
+        let result = check::run(&self.home, &entry.problem, &path)?;
         Ok((entry.problem, result))
     }
 
@@ -156,7 +156,7 @@ impl App {
         self.ensure_claim(id)?;
         let problem = self.backend.get(id)?.problem;
         let path = workspace::open(&self.home, &problem)?;
-        let check = check::run(&problem, &path)?;
+        let check = check::run(&self.home, &problem, &path)?;
         let Some(checker) = check.checker.as_ref().filter(|_| check.passed) else {
             return Ok(SubmitResult {
                 check,

@@ -2,7 +2,7 @@ mod common;
 
 use std::fs;
 
-use common::{Fixture, SPEC_PATH, TARGET_PATH, git};
+use common::{Fixture, KANI, SPEC_PATH, TARGET_PATH, UNLOCKED, VERUS_CARGO, git};
 
 #[test]
 fn config_set_and_get_the_catalog() {
@@ -293,7 +293,7 @@ fn check_runs_the_pinned_image_with_a_fixed_command() {
     );
     let joined = args.join(" ");
     for part in [
-        "run --rm --name pah-ev-a-0001-",
+        "run --rm --name pah-ev-a-0001-check-",
         "--network none",
         "--cap-drop ALL",
         "--security-opt no-new-privileges",
@@ -305,6 +305,13 @@ fn check_runs_the_pinned_image_with_a_fixed_command() {
     }
     let mount = format!("type=bind,source={},target=/work,readonly", ws.display());
     assert!(args.contains(&mount), "{joined}");
+    assert_eq!(
+        f.runtime_calls().len(),
+        1,
+        "a standalone file needs no fetch"
+    );
+    assert!(!joined.contains("cargo-cache"), "{joined}");
+    assert_user_flag(&f, &args);
 
     let mut failing = f.command(&["check", "ev-a-0001"]);
     failing.env("PAH_FAKE_EXIT", "1");
@@ -315,6 +322,180 @@ fn check_runs_the_pinned_image_with_a_fixed_command() {
         text.contains("FAILED: the checker exited with code 1"),
         "{text}"
     );
+}
+
+/// On Unix, containers run as the owner of the home directory; on Windows,
+/// Docker Desktop needs no user flag.
+fn assert_user_flag(f: &Fixture, args: &[String]) {
+    let at = args.iter().position(|a| a == "--user");
+    if cfg!(unix) {
+        let at = at.expect("--user on unix");
+        let expected = owner(&f.home);
+        assert_eq!(args[at + 1], expected);
+    } else {
+        assert!(at.is_none(), "{args:?}");
+    }
+}
+
+#[cfg(unix)]
+fn owner(path: &std::path::Path) -> String {
+    use std::os::unix::fs::MetadataExt;
+    let meta = fs::metadata(path).unwrap();
+    format!("{}:{}", meta.uid(), meta.gid())
+}
+
+#[cfg(not(unix))]
+fn owner(_path: &std::path::Path) -> String {
+    String::new()
+}
+
+/// The value after each `flag` in `args`.
+fn values(args: &[String], flag: &str) -> Vec<String> {
+    args.windows(2)
+        .filter(|pair| pair[0] == flag)
+        .map(|pair| pair[1].clone())
+        .collect()
+}
+
+#[test]
+fn cargo_checks_fetch_first_then_run_offline() {
+    let f = Fixture::new("cargo");
+    f.add_problem_check("ev-a-0001", VERUS_CARGO);
+    f.ok(&["work", "ev-a-0001"]);
+    let ws = f.workspace("ev-a-0001");
+    let out = f.ok(&["check", "ev-a-0001"]);
+    assert!(out.contains("Dependencies: fetched in"), "{out}");
+    assert!(out.contains("PASSED"), "{out}");
+
+    let calls = f.runtime_calls();
+    assert_eq!(calls.len(), 2, "{calls:?}");
+    let (fetch, check) = (&calls[0], &calls[1]);
+    let cache = f.home.join("cache").join("cargo-verus");
+    assert!(cache.is_dir());
+    let image = format!("ghcr.io/proofathome/verus@sha256:{}", "a".repeat(64));
+
+    // Fetch: network on, repository read-only, cache writable, online.
+    assert!(fetch.join(" ").contains("--name pah-ev-a-0001-fetch-"));
+    assert!(!fetch.contains(&"--network".to_owned()), "{fetch:?}");
+    assert_eq!(
+        values(fetch, "--mount"),
+        [
+            format!("type=bind,source={},target=/work,readonly", ws.display()),
+            format!("type=bind,source={},target=/cargo-cache", cache.display()),
+        ]
+    );
+    assert_eq!(values(fetch, "--env"), ["CARGO_HOME=/cargo-cache"]);
+    assert_eq!(values(fetch, "--workdir"), ["/work/example-virtio"]);
+    let at = fetch.iter().position(|a| *a == image).unwrap();
+    assert_eq!(&fetch[at + 1..], ["cargo", "fetch", "--locked"]);
+    for flag in ["--cap-drop", "--security-opt", "--pids-limit", "--memory"] {
+        assert!(fetch.contains(&flag.to_owned()), "{flag} on fetch");
+    }
+    assert_user_flag(&f, fetch);
+
+    // Check: no network, everything read-only, Cargo offline.
+    assert_eq!(values(check, "--network"), ["none"]);
+    assert_eq!(
+        values(check, "--mount"),
+        [
+            format!("type=bind,source={},target=/work,readonly", ws.display()),
+            format!(
+                "type=bind,source={},target=/cargo-cache,readonly",
+                cache.display()
+            ),
+        ]
+    );
+    assert_eq!(
+        values(check, "--env"),
+        ["CARGO_HOME=/cargo-cache", "CARGO_NET_OFFLINE=true"]
+    );
+    let at = check.iter().position(|a| *a == image).unwrap();
+    assert_eq!(
+        &check[at + 1..],
+        ["cargo", "verus", "focus", "--locked", "--offline"]
+    );
+    assert_user_flag(&f, check);
+
+    // The same Cargo.lock was fetched already: only the check runs.
+    f.clear_runtime_log();
+    let out = f.ok(&["check", "ev-a-0001"]);
+    assert!(out.contains("already fetched"), "{out}");
+    assert_eq!(f.runtime_calls().len(), 1);
+    assert_eq!(values(&f.runtime_args(), "--network"), ["none"]);
+}
+
+#[test]
+fn kani_fetches_with_its_own_cache_and_runs_one_exact_harness() {
+    let f = Fixture::new("kani");
+    f.add_problem_check("ev-k-0001", KANI);
+    f.ok(&["work", "ev-k-0001"]);
+    f.ok(&["check", "ev-k-0001"]);
+    let calls = f.runtime_calls();
+    assert_eq!(calls.len(), 2);
+    let cache = f.home.join("cache").join("cargo-kani");
+    assert!(values(&calls[0], "--mount")[1].contains(&cache.display().to_string()));
+    assert_eq!(values(&calls[1], "--workdir"), ["/work/example-virtio/src"]);
+    let check = &calls[1];
+    let at = check.iter().position(|a| a == "cargo").unwrap();
+    assert_eq!(
+        &check[at..],
+        [
+            "cargo",
+            "kani",
+            "--harness",
+            "proofs::credit_wraps",
+            "--exact"
+        ]
+    );
+}
+
+#[test]
+fn a_failed_fetch_stops_the_check() {
+    let f = Fixture::new("fetchfail");
+    f.add_problem_check("ev-a-0001", VERUS_CARGO);
+    f.ok(&["work", "ev-a-0001"]);
+    let mut command = f.command(&["check", "ev-a-0001"]);
+    command.env("PAH_FAKE_FETCH_EXIT", "101");
+    let output = command.output().unwrap();
+    assert!(!output.status.success());
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        text.contains(
+            "FAILED: fetching the dependencies pinned by Cargo.lock exited with code 101"
+        ),
+        "{text}"
+    );
+    assert!(text.contains("Fetch output"), "{text}");
+    assert_eq!(f.runtime_calls().len(), 1, "the checker must not run");
+
+    // A failed fetch is not remembered: the next check fetches again.
+    f.clear_runtime_log();
+    f.ok(&["check", "ev-a-0001"]);
+    assert_eq!(f.runtime_calls().len(), 2);
+}
+
+#[test]
+fn a_cargo_check_without_a_lock_file_is_a_broken_problem() {
+    let f = Fixture::new("unlocked");
+    f.add_problem_check("ev-a-0001", UNLOCKED);
+    f.ok(&["work", "ev-a-0001"]);
+    let error = f.fails(&["check", "ev-a-0001"]);
+    assert!(
+        error.contains("there is no Cargo.lock in `unlocked/src` or above it"),
+        "{error}"
+    );
+    assert!(!f.runtime_log.exists(), "no container may run");
+}
+
+#[test]
+fn policy_checks_run_before_the_fetch() {
+    let f = Fixture::new("policyfirst");
+    f.add_problem_check("ev-a-0001", VERUS_CARGO);
+    f.ok(&["work", "ev-a-0001"]);
+    fs::write(f.workspace("ev-a-0001").join("README.md"), "x\n").unwrap();
+    let output = f.fails(&["check", "ev-a-0001"]);
+    assert!(output.contains("`README.md` changed"), "{output}");
+    assert!(!f.runtime_log.exists());
 }
 
 #[test]

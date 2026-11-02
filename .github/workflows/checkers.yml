@@ -1,0 +1,130 @@
+name: Checker images
+
+# Builds the Verus and Kani checker images, runs the examples in
+# checkers/examples against them the way `proofathome check` does, and pushes
+# them to ghcr.io tagged with the tool version. The job summary shows the
+# pushed digest to put into problem files.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "checkers/**"
+      - ".github/workflows/checkers.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: checkers-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - tool: verus
+            version_arg: VERUS_VERSION
+          - tool: kani
+            version_arg: KANI_VERSION
+    env:
+      TOOL: ${{ matrix.tool }}
+      LOCAL_IMAGE: proofathome-${{ matrix.tool }}:ci
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Each image is over 3 GB unpacked.
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+
+      - name: Read the tool version from the Dockerfile
+        id: version
+        env:
+          VERSION_ARG: ${{ matrix.version_arg }}
+        run: |
+          version=$(sed -n "s/^ARG ${VERSION_ARG}=//p" "checkers/$TOOL/Dockerfile" | head -n 1)
+          [ -n "$version" ] || { echo "::error::no ARG $VERSION_ARG in checkers/$TOOL/Dockerfile"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        run: docker build --platform linux/amd64 --tag "$LOCAL_IMAGE" "checkers/$TOOL"
+
+      # The same steps as `proofathome check`: a fetch with network into a
+      # cache, then the check without network, read-only, as a non-root user.
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+          cache=$(mktemp -d)
+          user="$(id -u):$(id -g)"
+          hardening=(--cap-drop ALL --security-opt no-new-privileges --pids-limit 512 --memory 8g --user "$user")
+          fetch() {
+            docker run --rm "${hardening[@]}" \
+              --mount "type=bind,source=$PWD/checkers/examples/$1,target=/work,readonly" \
+              --mount "type=bind,source=$cache,target=/cargo-cache" \
+              --env CARGO_HOME=/cargo-cache --workdir /work \
+              "$LOCAL_IMAGE" cargo fetch --locked
+          }
+          check() {
+            local dir=$1; shift
+            docker run --rm --network none "${hardening[@]}" \
+              --mount "type=bind,source=$PWD/checkers/examples/$dir,target=/work,readonly" \
+              --mount "type=bind,source=$cache,target=/cargo-cache,readonly" \
+              --env CARGO_HOME=/cargo-cache --env CARGO_NET_OFFLINE=true --workdir /work \
+              "$LOCAL_IMAGE" "$@" 2>&1
+          }
+          # Passes when the command fails with the expected message, not
+          # with some other error.
+          expect_failure() {
+            local message=$1; shift
+            if output=$("$@"); then
+              echo "$output"; echo "::error::expected a verification failure"; exit 1
+            fi
+            echo "$output" | tail -n 20
+            grep -q -- "$message" <<< "$output" || { echo "::error::missing '$message'"; exit 1; }
+          }
+          case "$TOOL" in
+            verus)
+              check verus-file verus --crate-type=lib max.rs
+              fetch verus-pass
+              check verus-pass cargo verus focus --locked --offline
+              fetch verus-fail
+              expect_failure "postcondition not satisfied" \
+                check verus-fail cargo verus focus --locked --offline
+              ;;
+            kani)
+              fetch kani
+              check kani cargo kani --harness proofs::never_smaller --exact
+              expect_failure "VERIFICATION:- FAILED" \
+                check kani cargo kani --harness proofs::always_larger --exact
+              ;;
+          esac
+
+      - name: Push
+        id: push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          remote="ghcr.io/proofathome/$TOOL:$VERSION"
+          echo "$GITHUB_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          docker tag "$LOCAL_IMAGE" "$remote"
+          docker push "$remote"
+          digest=$(docker buildx imagetools inspect "$remote" --format '{{json .Manifest}}' | jq -r .digest)
+          docker logout ghcr.io
+          {
+            echo "### $TOOL $VERSION"
+            echo
+            echo "Pushed \`$remote\`. Put this in problem files:"
+            echo
+            echo '```toml'
+            echo "checker = { tool = \"$TOOL\", version = \"$VERSION\", image = \"ghcr.io/proofathome/$TOOL@$digest\" }"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
