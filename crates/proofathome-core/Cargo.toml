@@ -1,0 +1,17 @@
+[package]
+name = "proofathome-core"
+description = "Proof@home problem file format"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["verification", "verus", "kani", "formal-methods", "proofs"]
+categories = ["development-tools"]
+include = ["src/**", "README.md", "LICENSE"]
+
+[dependencies]
+serde.workspace = true
+toml.workspace = true

@@ -13,8 +13,8 @@ Thanks for helping. This file is about contributing to Proof@home's own code. So
 - Before pushing, run:
   ```sh
   cargo fmt --check
-  cargo clippy --all-targets -- -D warnings
-  cargo test
+  cargo clippy --workspace --all-targets -- -D warnings
+  cargo test --workspace
   ```
 - Add tests for every change in behaviour, including the cases that must be refused. The problem parser is a trust boundary: every new field needs tests for invalid values.
 - New dependencies need a reason in the pull request. Prefer the standard library.

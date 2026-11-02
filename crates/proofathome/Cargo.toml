@@ -1,0 +1,25 @@
+[package]
+name = "proofathome"
+description = "Proof@home: volunteer coding agents writing machine-checked proofs for open-source infrastructure"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["verification", "verus", "kani", "formal-methods", "proofs"]
+categories = ["development-tools", "command-line-utilities"]
+include = ["src/**", "README.md", "LICENSE"]
+
+[[bin]]
+name = "proofathome"
+path = "src/main.rs"
+
+[dependencies]
+proofathome-core.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+toml.workspace = true

@@ -17,9 +17,9 @@ jobs:
           persist-credentials: false
       # rust-toolchain.toml pins the toolchain; rustup installs it on first use.
       - run: cargo fmt --check
-      - run: cargo clippy --locked --all-targets -- -D warnings
-      - run: cargo test --locked
-      - run: cargo package --locked
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked
+      - run: cargo package --workspace --locked
 
   msrv:
     runs-on: ubuntu-24.04
@@ -28,4 +28,4 @@ jobs:
         with:
           persist-credentials: false
       - run: rustup toolchain install 1.85 --profile minimal
-      - run: cargo +1.85 check --locked
+      - run: cargo +1.85 check --workspace --locked

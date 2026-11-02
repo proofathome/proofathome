@@ -7,7 +7,8 @@ id = "ev-vsock-credit-0007"
 project = "example-virtio"
 repo = "https://github.com/proofathome/example-virtio"
 commit = "0123456789abcdef0123456789abcdef01234567"
-checker = { tool = "verus", version = "0.2026.10.26.d17fbd0", image = "sha256:<64 hex>" }
+checker = { tool = "verus", version = "0.2026.10.26.d17fbd0", image = "ghcr.io/proofathome/verus@sha256:<64 hex>" }
+check = { crate_root = "example-virtio/src/lib.rs" }
 target = "example-virtio/src/vsock/credit.rs::peer_avail_credit"
 spec_files = { "example-virtio/src/vsock/credit_spec.rs" = "<sha256>" }
 editable = ["example-virtio/src/vsock/credit.rs", "example-virtio/src/vsock/credit_proof.rs"]
@@ -25,7 +26,8 @@ hints = "The credit counters wrap."
 | `commit` | Full commit ID: 40 (SHA-1) or 64 (SHA-256) lowercase hex digits. Branch names are refused. |
 | `checker.tool` | `verus` or `kani`. |
 | `checker.version` | 1–64 letters, digits or `.-+_`. |
-| `checker.image` | Checker container image digest: `sha256:` and 64 lowercase hex digits. |
+| `checker.image` | Checker container image pinned by digest: `<name>@sha256:<64 lowercase hex>`. The name is lowercase: an optional registry host with an optional port, then path segments of `a-z`, `0-9`, `.`, `_` and `-` that start and end with a letter or digit, joined by `/`. At most 200 characters. Tags such as `:latest` are refused, and so is a bare digest without a name. |
+| `check` | How the checker is pointed at the code. Depends on `checker.tool`, see below. |
 | `target` | `<file>::<item path>`. The file is a repository-relative `.rs` path; the item is one or more Rust identifiers joined by `::`, for example `src/queue.rs::Queue::pop`. |
 | `spec_files` | 1–32 repository-relative paths, each with the SHA-256 of its content. A result must leave them unchanged. |
 | `editable` | 1–32 distinct repository-relative paths. The only files a result may change or add. Never a spec file. |
@@ -48,3 +50,18 @@ Repository-relative paths use `/`, have no empty, `.` or `..` segments, no leadi
 | `XL` | no bound; only for contributors who opt in |
 
 A problem fits a budget when its size's upper bound is at most the remaining tokens. `XL` never fits a token budget. The numbers are placeholders until the pilot measures real attempts.
+
+## The `check` table
+
+The command that runs inside the checker container is fixed by the tool. A problem file only names what to check; it can never supply a command or arguments. Unknown keys and keys that belong to the other tool are refused.
+
+| Tool | `check` | Command | Working directory | Repository mount |
+| --- | --- | --- | --- | --- |
+| `verus` | `{ crate_root = "<path>.rs" }` | `verus --crate-type=lib <crate_root>` | `/work` | read-only |
+| `kani` | `{ harness = "<item path>", manifest_dir = "<dir>" }` | `cargo kani --harness <harness>` | `/work/<manifest_dir>` | writable, for build output |
+
+- `crate_root` is a repository-relative path to a `.rs` file.
+- `harness` is one or more Rust identifiers joined by `::`, for example `proofs::credit_wraps`.
+- `manifest_dir` is optional. It is the repository-relative directory holding `Cargo.toml`; without it, the repository root is used.
+
+The repository is mounted at `/work` at the pinned commit plus the result's changes.

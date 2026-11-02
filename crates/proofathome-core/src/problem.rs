@@ -16,6 +16,7 @@ const MAX_EDITABLE: usize = 32;
 const MAX_SPEC_FILES: usize = 32;
 const MAX_HINTS_LEN: usize = 2000;
 const MAX_TIME_BUDGET_S: u32 = 3600;
+const MAX_IMAGE_NAME_LEN: usize = 200;
 
 /// A validated problem.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,6 +31,8 @@ pub struct Problem {
     pub commit: String,
     /// The pinned checker.
     pub checker: Checker,
+    /// How the checker is pointed at the code.
+    pub check: Check,
     /// What must be proved: `<file path>::<item path>`.
     pub target: Target,
     /// Spec files and their SHA-256 hashes. A result must leave them unchanged.
@@ -54,8 +57,8 @@ pub struct Checker {
     pub tool: CheckerTool,
     /// Tool version, for example `0.2026.10.26.d17fbd0`.
     pub version: String,
-    /// Checker container image digest, `sha256:<64 hex>`.
-    pub image: String,
+    /// Checker container image, pinned by digest.
+    pub image: ImageRef,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -64,6 +67,65 @@ pub enum CheckerTool {
     Verus,
     Kani,
 }
+
+impl fmt::Display for CheckerTool {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            CheckerTool::Verus => "verus",
+            CheckerTool::Kani => "kani",
+        })
+    }
+}
+
+/// A container image pinned by digest: `<name>@sha256:<64 hex>`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImageRef {
+    /// Image name, for example `ghcr.io/proofathome/verus`.
+    pub name: String,
+    /// Digest, `sha256:<64 hex>`.
+    pub digest: String,
+}
+
+impl fmt::Display for ImageRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}@{}", self.name, self.digest)
+    }
+}
+
+/// How the checker is pointed at the code. Which keys apply depends on
+/// `checker.tool`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Check {
+    /// Verus checks one crate, given by its root file.
+    Verus {
+        /// Repository-relative path of the crate root, for example `src/lib.rs`.
+        crate_root: String,
+    },
+    /// Kani runs one harness in one Cargo package.
+    Kani {
+        /// Rust item path of the harness, for example `proofs::credit_wraps`.
+        harness: String,
+        /// Repository-relative directory holding `Cargo.toml`. `None` is the
+        /// repository root.
+        manifest_dir: Option<String>,
+    },
+}
+
+/// The command the checker container runs. It is fixed by the tool and never
+/// taken from the problem file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckCommand {
+    /// Program and arguments.
+    pub argv: Vec<String>,
+    /// Working directory inside the container. The repository is at `/work`.
+    pub workdir: String,
+    /// Whether the checker writes into the repository (Kani's build output).
+    /// Verus gets a read-only mount.
+    pub writable: bool,
+}
+
+/// Where the repository is mounted inside the checker container.
+pub const CONTAINER_WORKDIR: &str = "/work";
 
 /// The proof target: a file and an item inside it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -183,6 +245,7 @@ struct RawProblem {
     repo: String,
     commit: String,
     checker: RawChecker,
+    check: RawCheck,
     target: String,
     spec_files: BTreeMap<String, String>,
     editable: Vec<String>,
@@ -201,7 +264,46 @@ struct RawChecker {
     image: String,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawCheck {
+    crate_root: Option<String>,
+    harness: Option<String>,
+    manifest_dir: Option<String>,
+}
+
 impl Problem {
+    /// The command the checker container runs for this problem.
+    pub fn check_command(&self) -> CheckCommand {
+        match &self.check {
+            Check::Verus { crate_root } => CheckCommand {
+                argv: vec![
+                    "verus".to_owned(),
+                    "--crate-type=lib".to_owned(),
+                    crate_root.clone(),
+                ],
+                workdir: CONTAINER_WORKDIR.to_owned(),
+                writable: false,
+            },
+            Check::Kani {
+                harness,
+                manifest_dir,
+            } => CheckCommand {
+                argv: vec![
+                    "cargo".to_owned(),
+                    "kani".to_owned(),
+                    "--harness".to_owned(),
+                    harness.clone(),
+                ],
+                workdir: match manifest_dir {
+                    Some(dir) => format!("{CONTAINER_WORKDIR}/{dir}"),
+                    None => CONTAINER_WORKDIR.to_owned(),
+                },
+                writable: true,
+            },
+        }
+    }
+
     /// Parses and validates a problem file.
     pub fn from_toml_str(text: &str) -> Result<Problem, ParseError> {
         if text.len() > MAX_PROBLEM_FILE_BYTES {
@@ -219,7 +321,8 @@ impl Problem {
         check_object_id("commit", &raw.commit)?;
 
         check_version(&raw.checker.version)?;
-        check_image_digest(&raw.checker.image)?;
+        let image = parse_image_ref(&raw.checker.image)?;
+        let check = parse_check(raw.checker.tool, raw.check)?;
 
         let target = parse_target(&raw.target)?;
 
@@ -290,8 +393,9 @@ impl Problem {
             checker: Checker {
                 tool: raw.checker.tool,
                 version: raw.checker.version,
-                image: raw.checker.image,
+                image,
             },
+            check,
             target,
             spec_files: raw.spec_files,
             editable: raw.editable,
@@ -384,13 +488,113 @@ fn check_version(value: &str) -> Result<(), ParseError> {
     }
 }
 
-fn check_image_digest(value: &str) -> Result<(), ParseError> {
-    match value.strip_prefix("sha256:") {
-        Some(hex) if hex.len() == 64 && is_lower_hex(hex) => Ok(()),
-        _ => Err(invalid(
-            "checker.image",
-            "must be an image digest: `sha256:` and 64 lowercase hex digits",
-        )),
+/// `<name>@sha256:<64 hex>`. The name is lowercase: an optional registry host
+/// with an optional port, then path segments, joined by `/`. Tags are refused:
+/// only the digest pins the image.
+fn parse_image_ref(value: &str) -> Result<ImageRef, ParseError> {
+    let reason = format!(
+        "must be a pinned image reference `<name>@sha256:<64 lowercase hex>`, \
+         with a lowercase name of at most {MAX_IMAGE_NAME_LEN} characters and no tag, \
+         for example `ghcr.io/proofathome/verus@sha256:...`"
+    );
+    let Some((name, digest)) = value.split_once('@') else {
+        return Err(invalid("checker.image", reason));
+    };
+    let digest_ok = digest
+        .strip_prefix("sha256:")
+        .is_some_and(|hex| hex.len() == 64 && is_lower_hex(hex));
+    if !digest_ok || !is_image_name(name) {
+        return Err(invalid("checker.image", reason));
+    }
+    Ok(ImageRef {
+        name: name.to_owned(),
+        digest: digest.to_owned(),
+    })
+}
+
+fn is_image_name(name: &str) -> bool {
+    if name.is_empty() || name.len() > MAX_IMAGE_NAME_LEN {
+        return false;
+    }
+    let segments: Vec<&str> = name.split('/').collect();
+    segments.iter().enumerate().all(|(index, segment)| {
+        if index == 0 && segments.len() > 1 && segment.contains(':') {
+            is_registry_host(segment)
+        } else {
+            is_image_path_segment(segment)
+        }
+    })
+}
+
+/// `host:port`. A host without a port is checked as a path segment, which
+/// allows the same characters.
+fn is_registry_host(segment: &str) -> bool {
+    let Some((host, port)) = segment.split_once(':') else {
+        return false;
+    };
+    is_image_path_segment(host)
+        && (1..=5).contains(&port.len())
+        && port.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// `[a-z0-9._-]+`, starting and ending with a letter or digit.
+fn is_image_path_segment(segment: &str) -> bool {
+    let alnum = |b: u8| b.is_ascii_lowercase() || b.is_ascii_digit();
+    let bytes = segment.as_bytes();
+    match (bytes.first(), bytes.last()) {
+        (Some(&first), Some(&last)) => {
+            alnum(first)
+                && alnum(last)
+                && bytes
+                    .iter()
+                    .all(|&b| alnum(b) || matches!(b, b'.' | b'_' | b'-'))
+        }
+        _ => false,
+    }
+}
+
+fn parse_check(tool: CheckerTool, raw: RawCheck) -> Result<Check, ParseError> {
+    match tool {
+        CheckerTool::Verus => {
+            if raw.harness.is_some() || raw.manifest_dir.is_some() {
+                return Err(invalid(
+                    "check",
+                    "may only have `crate_root` for verus; `harness` and `manifest_dir` are for kani",
+                ));
+            }
+            let Some(crate_root) = raw.crate_root else {
+                return Err(invalid("check", "must have `crate_root` for verus"));
+            };
+            check_rel_path("check", &crate_root)?;
+            if !crate_root.ends_with(".rs") {
+                return Err(invalid("check", "`crate_root` must be a `.rs` file"));
+            }
+            Ok(Check::Verus { crate_root })
+        }
+        CheckerTool::Kani => {
+            if raw.crate_root.is_some() {
+                return Err(invalid(
+                    "check",
+                    "may only have `harness` and `manifest_dir` for kani; `crate_root` is for verus",
+                ));
+            }
+            let Some(harness) = raw.harness else {
+                return Err(invalid("check", "must have `harness` for kani"));
+            };
+            if !harness.split("::").all(is_ident) {
+                return Err(invalid(
+                    "check",
+                    "`harness` must be one or more Rust identifiers joined by `::`",
+                ));
+            }
+            if let Some(dir) = &raw.manifest_dir {
+                check_rel_path("check", dir)?;
+            }
+            Ok(Check::Kani {
+                harness,
+                manifest_dir: raw.manifest_dir,
+            })
+        }
     }
 }
 

@@ -21,16 +21,17 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Check the tag is on main and matches the crate version
+      - name: Check the tag is on main and matches the workspace version
         env:
           TAG: ${{ github.ref_name }}
         run: |
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main \
             || { echo "::error::$TAG is not on main"; exit 1; }
-          version=$(cargo metadata --locked --no-deps --format-version 1 | jq -r '.packages[0].version')
+          version=$(cargo metadata --locked --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "proofathome") | .version')
           [ "$TAG" = "v$version" ] \
-            || { echo "::error::tag $TAG does not match crate version $version"; exit 1; }
-      - run: cargo test --locked
-      - run: cargo publish --locked
+            || { echo "::error::tag $TAG does not match workspace version $version"; exit 1; }
+      - run: cargo test --workspace --locked
+      # Publishes proofathome-core, then proofathome, in dependency order.
+      - run: cargo publish --workspace --locked
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
