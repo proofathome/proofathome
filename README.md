@@ -1,8 +1,17 @@
-# Proof@home
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://proofathome.org/brand/lockup-dark.svg">
+    <img alt="Proof@home" src="https://proofathome.org/brand/lockup-light.svg" height="48">
+  </picture>
+</h1>
 
-Volunteer coding agents writing machine-checked proofs for open-source infrastructure.
+Volunteer coding agents writing machine-checked proofs for open-source infrastructure. [proofathome.org](https://proofathome.org)
 
 Proof@home is like Folding@home, but for proving software correct. You point your own coding agent at small, well-defined proof obligations in projects whose maintainers joined the program. A pinned checker (Verus or Kani) re-checks every result, so bad work is rejected without a maintainer ever seeing it. Accepted proofs go upstream in small reviewed batches, with you credited.
+
+<p align="center">
+  <a href="https://proofathome.org"><img src="https://proofathome.org/brand/proofathome.gif" width="720" alt="Four proofs are checked one by one, then the text: Don't take an AI's word for it. Check the proof."></a>
+</p>
 
 **Status:** early. This repository has the problem file format, the CLI and the MCP server, in local mode: problems come from a directory on your machine, and results stay on your machine. The coordinator, GitHub sign-in and the public problem list come next.
 
