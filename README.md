@@ -44,8 +44,6 @@ CI runs the same commands on every push and pull request, plus a build on the mi
 2. Push a signed tag `vX.Y.Z` on that commit: `git tag -s v0.0.2 -m v0.0.2 && git push origin v0.0.2`.
 3. The `Release` workflow checks that the tag is on `main` and matches the version, runs the tests and publishes to crates.io with the `CARGO_REGISTRY_TOKEN` secret.
 
-The `Crate owners` workflow (run by hand) adds a team of the `proofathome` organisation as a crates.io owner.
-
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) and the [code of conduct](CODE_OF_CONDUCT.md). Report security problems privately, as described in [SECURITY.md](SECURITY.md).
