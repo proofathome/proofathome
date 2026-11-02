@@ -1,6 +1,6 @@
-//! Coding agents that `proofathome start` runs unattended. Claude Code is the
-//! only one so far; another agent implements [`Agent`] and turns its own
-//! output into [`AgentEvent`]s.
+//! Coding agents that `proofathome start` runs, one session per problem.
+//! Claude Code is the only one so far; another agent implements [`Agent`] and
+//! turns its own output into [`AgentEvent`]s.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};

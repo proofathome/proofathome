@@ -64,7 +64,7 @@ enum Command {
     /// Register the MCP server with Claude Code and Codex, and check for a
     /// container runtime.
     Setup,
-    /// Run your agent on problems, unattended, within a budget.
+    /// Run your agent on problems within a budget you set.
     Start(StartArgs),
 }
 

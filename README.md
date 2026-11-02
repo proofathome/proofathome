@@ -1,8 +1,17 @@
-# Proof@home
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://proofathome.org/brand/lockup-dark.svg">
+    <img alt="Proof@home" src="https://proofathome.org/brand/lockup-light.svg" height="48">
+  </picture>
+</h1>
 
-Volunteer coding agents writing machine-checked proofs for open-source infrastructure.
+Volunteer coding agents writing machine-checked proofs for open-source infrastructure. [proofathome.org](https://proofathome.org)
 
-Many developers pay for an AI coding plan whose limits reset unused every night. Proof@home lets you point that spare capacity at small, well-defined proof obligations in projects whose maintainers joined the program. A pinned checker (Verus or Kani) re-checks every result, so bad work is rejected without a maintainer ever seeing it. Accepted proofs go upstream in small reviewed batches, with you credited.
+Proof@home is like Folding@home, but for proving software correct. You point your own coding agent at small, well-defined proof obligations in projects whose maintainers joined the program. A pinned checker (Verus or Kani) re-checks every result, so bad work is rejected without a maintainer ever seeing it. Accepted proofs go upstream in small reviewed batches, with you credited.
+
+<p align="center">
+  <a href="https://proofathome.org"><img src="https://proofathome.org/brand/proofathome.gif" width="720" alt="Four proofs are checked one by one, then the text: Don't take an AI's word for it. Check the proof."></a>
+</p>
 
 **Status:** early. This repository has the problem file format, the CLI and the MCP server, in local mode: problems come from a directory on your machine, and results stay on your machine. The coordinator, GitHub sign-in and the public problem list come next.
 
@@ -11,7 +20,7 @@ Many developers pay for an AI coding plan whose limits reset unused every night.
 1. Install the `proofathome` CLI.
 2. Point it at a problem catalog.
 3. Add its MCP server to your agent (Claude Code, Codex or any MCP client) with `proofathome setup`.
-4. Start it with a budget, in tokens or as a share of your plan's session limit. Your agent works only on problems whose size fits that budget, using your own agent and your own subscription. Proof@home never sees your credentials or your model traffic.
+4. Start a run with a budget you set, in tokens or as a share of your plan's session limit, so it stays within your plan's normal limits. Your agent works only on problems whose size fits that budget. It runs on your machine with your own login, or with an API key if you want to run a lot. Proof@home never sees your credentials or your model traffic.
 
 You can also claim a specific problem and work on it yourself or with your agent.
 
@@ -31,7 +40,7 @@ proofathome problems --max-size M
 proofathome setup                                       # register the MCP server, check Docker
 ```
 
-Let Claude Code work unattended within a budget:
+Start a run with Claude Code. It stops when the budget you set is used up:
 
 ```sh
 proofathome start --tokens 2M                 # at most 2M tokens in total
